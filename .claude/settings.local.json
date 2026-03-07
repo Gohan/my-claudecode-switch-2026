@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go test:*)",
+      "Bash(git push:*)",
+      "Bash(make test:*)",
+      "Bash(go build:*)",
+      "WebSearch",
+      "mcp__web-search-prime__webSearchPrime",
+      "Bash(tmux list-panes:*)",
+      "Bash(tmux kill-pane:*)",
+      "mcp__zread__get_repo_structure",
+      "mcp__zread__read_file"
+    ]
+  }
+}
