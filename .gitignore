@@ -21,6 +21,11 @@ go.work
 # IDE
 .idea/
 .vscode/
+.claude/
+*.swp
+*.swo
+.idea/
+.vscode/
 *.swp
 *.swo
 
