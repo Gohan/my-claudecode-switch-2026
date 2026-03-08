@@ -24,6 +24,7 @@ const (
 	viewSaveZAI
 	viewSaveTencentCloud
 	viewSaveKimi
+	viewSaveAli
 	viewConfirmApply
 	viewConfirmDelete
 	viewConfirmRun       // 确认运行 profile
@@ -41,6 +42,7 @@ var createMenuItems = []createMenuItem{
 	{key: "m", label: "Kimi", description: "Create Kimi official API profile"},
 	{key: "z", label: "z.ai API", description: "Create z.ai Coding Plan profile"},
 	{key: "t", label: "Tencent Cloud", description: "Create Tencent Cloud Coding Plan profile"},
+	{key: "a", label: "Ali BaiLian", description: "Create Ali BaiLian Coding Plan profile"},
 }
 
 type Model struct {
@@ -144,6 +146,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSaveTencentCloud(msg)
 	case viewSaveKimi:
 		return m.updateSaveKimi(msg)
+	case viewSaveAli:
+		return m.updateSaveAli(msg)
 	case viewConfirmApply:
 		return m.updateConfirmApply(msg)
 	case viewConfirmDelete:
@@ -214,7 +218,7 @@ func (m Model) updateCreateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		return m.handleCreateMenuSelection()
-	case "s", "m", "z", "t":
+	case "s", "m", "z", "t", "a":
 		// 支持快捷键直接选择
 		for i, item := range createMenuItems {
 			if item.key == keyMsg.String() {
@@ -270,6 +274,16 @@ func (m *Model) handleCreateMenuSelection() (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		m.input.Placeholder = "Tencent Coding Plan"
 		m.saveOriginalName = "Tencent Coding Plan"
+		m.apiKeyInput.SetValue("")
+		m.input.Focus()
+		return m, textinput.Blink
+	case "a":
+		// 创建阿里百炼配置
+		m.state = viewSaveAli
+		m.apiStep = 0
+		m.input.SetValue("")
+		m.input.Placeholder = "Ali Coding Plan"
+		m.saveOriginalName = "Ali Coding Plan"
 		m.apiKeyInput.SetValue("")
 		m.input.Focus()
 		return m, textinput.Blink
@@ -540,6 +554,17 @@ func (m Model) updateSaveKimi(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateSaveAPI(msg, cfg)
 }
 
+func (m Model) updateSaveAli(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cfg := apiProfileConfig{
+		name:           "Ali",
+		step:           &m.apiStep,
+		defaultName:    "Ali Coding Plan",
+		profileGetter:  profile.DefaultAliProfile,
+		successMessage: "✓ Saved Ali BaiLian profile",
+	}
+	return m.updateSaveAPI(msg, cfg)
+}
+
 func (m Model) updateConfirmApply(msg tea.Msg) (tea.Model, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -649,6 +674,8 @@ func (m Model) View() string {
 		return m.viewSaveTencentCloud()
 	case viewSaveKimi:
 		return m.viewSaveKimi()
+	case viewSaveAli:
+		return m.viewSaveAli()
 	case viewConfirmApply:
 		return m.viewConfirmApply()
 	case viewConfirmDelete:
@@ -961,6 +988,49 @@ func (m Model) viewSaveKimi() string {
 	b.WriteString(dimStyle.Render("  • API_TIMEOUT_MS: 3000000"))
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render("  • CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1"))
+
+	if m.message != "" {
+		b.WriteString("\n")
+		b.WriteString(messageStyle.Render(m.message))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("[enter] next  [esc] cancel"))
+
+	return b.String()
+}
+
+func (m Model) viewSaveAli() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Create Ali BaiLian CodingPlan Profile"))
+	b.WriteString("\n\n")
+
+	if m.apiStep == 0 {
+		b.WriteString(dimStyle.Render("Step 1/2: Enter profile name"))
+		b.WriteString("\n\n")
+		b.WriteString("Profile name: ")
+		b.WriteString(m.input.View())
+	} else {
+		b.WriteString(dimStyle.Render("Step 2/2: Enter your Ali BaiLian API key"))
+		b.WriteString("\n\n")
+		b.WriteString("Profile name: ")
+		b.WriteString(activeStyle.Render(m.input.Value()))
+		b.WriteString("\n\n")
+		b.WriteString("API Key: ")
+		b.WriteString(m.apiKeyInput.View())
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  (The key will be masked for security)"))
+	}
+
+	b.WriteString("\n\n")
+	b.WriteString(dimStyle.Render("This profile will include:"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • ANTHROPIC_BASE_URL: https://coding.dashscope.aliyuncs.com/apps/anthropic"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • Model mappings: haiku→glm-5, sonnet→kimi-k2.5, opus→MiniMax-M2.5"))
 
 	if m.message != "" {
 		b.WriteString("\n")
