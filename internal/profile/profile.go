@@ -179,6 +179,38 @@ func GetSummary(settings map[string]interface{}) (model, baseURL string) {
 	return
 }
 
+// DefaultZAIProfile 返回带有 z.ai 配置的默认 profile
+func DefaultZAIProfile() map[string]interface{} {
+	return map[string]interface{}{
+		"env": map[string]interface{}{
+			"ANTHROPIC_AUTH_TOKEN":                    "your_zai_api_key",
+			"ANTHROPIC_BASE_URL":                      "https://api.z.ai/api/anthropic",
+			"API_TIMEOUT_MS":                          "3000000",
+			"ANTHROPIC_DEFAULT_HAIKU_MODEL":           "glm-4.5-air",
+			"ANTHROPIC_DEFAULT_SONNET_MODEL":          "glm-4.7",
+			"ANTHROPIC_DEFAULT_OPUS_MODEL":            "glm-5",
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+		},
+	}
+}
+
+// GetModelMapping 返回模型映射信息
+func GetModelMapping(settings map[string]interface{}) map[string]string {
+	mapping := make(map[string]string)
+	if env, ok := settings["env"].(map[string]interface{}); ok {
+		if v, ok := env["ANTHROPIC_DEFAULT_HAIKU_MODEL"]; ok {
+			mapping["haiku"] = fmt.Sprintf("%v", v)
+		}
+		if v, ok := env["ANTHROPIC_DEFAULT_SONNET_MODEL"]; ok {
+			mapping["sonnet"] = fmt.Sprintf("%v", v)
+		}
+		if v, ok := env["ANTHROPIC_DEFAULT_OPUS_MODEL"]; ok {
+			mapping["opus"] = fmt.Sprintf("%v", v)
+		}
+	}
+	return mapping
+}
+
 func loadJSON(path string) (map[string]interface{}, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
