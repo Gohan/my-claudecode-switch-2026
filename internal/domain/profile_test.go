@@ -213,6 +213,16 @@ func TestIsActive_DifferentKeys(t *testing.T) {
 	assert.False(t, IsActive(current, p))
 }
 
+func TestIsActive_DifferentLengths(t *testing.T) {
+	current := map[string]interface{}{"model": "opus", "extra": "value"}
+	p := Profile{
+		Name:     "test",
+		Settings: map[string]interface{}{"model": "opus"},
+	}
+
+	assert.False(t, IsActive(current, p))
+}
+
 func TestMaskSensitive_Token(t *testing.T) {
 	assert.Equal(t, "abcd****wxyz", MaskSensitive("api_token", "abcdefghiwxyz"))
 	assert.Equal(t, "****", MaskSensitive("api_token", "short"))
