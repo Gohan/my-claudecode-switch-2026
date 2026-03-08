@@ -241,6 +241,19 @@ func DefaultTencentCloudProfile() map[string]interface{} {
 	}
 }
 
+// DefaultKimiProfile 返回带有 Kimi 官网配置的默认 profile
+func DefaultKimiProfile() map[string]interface{} {
+	return map[string]interface{}{
+		"model": "opus",
+		"env": map[string]interface{}{
+			"ANTHROPIC_AUTH_TOKEN":                    "your_kimi_api_key",
+			"ANTHROPIC_BASE_URL":                      "https://api.kimi.com/coding/",
+			"API_TIMEOUT_MS":                          "3000000",
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+		},
+	}
+}
+
 // GetModelMapping 返回模型映射信息
 func GetModelMapping(settings map[string]interface{}) map[string]string {
 	mapping := make(map[string]string)

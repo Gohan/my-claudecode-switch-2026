@@ -2,12 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"claude-switch/internal/profile"
+	"claude-switch/internal/runner"
 )
 
 type viewState int
@@ -15,24 +17,41 @@ type viewState int
 const (
 	viewList viewState = iota
 	viewPreview
+	viewCreateMenu       // 创建预设菜单
 	viewSave
 	viewSaveOverwrite    // 覆盖确认（显示diff）
 	viewSaveNewName      // 另存为新名字
 	viewSaveZAI
 	viewSaveTencentCloud
+	viewSaveKimi
 	viewConfirmApply
 	viewConfirmDelete
+	viewConfirmRun       // 确认运行 profile
 )
+
+// createMenuItem 定义创建菜单项
+type createMenuItem struct {
+	key         string
+	label       string
+	description string
+}
+
+var createMenuItems = []createMenuItem{
+	{key: "s", label: "Save Current", description: "Save current settings as profile"},
+	{key: "m", label: "Kimi", description: "Create Kimi official API profile"},
+	{key: "z", label: "z.ai API", description: "Create z.ai Coding Plan profile"},
+	{key: "t", label: "Tencent Cloud", description: "Create Tencent Cloud Coding Plan profile"},
+}
 
 type Model struct {
 	state            viewState
 	profiles         []profile.Profile
 	current          map[string]interface{}
 	cursor           int
+	createMenuCursor int // 创建菜单光标
 	input            textinput.Model
 	apiKeyInput      textinput.Model
-	zaiStep          int // 0: 输入 name, 1: 输入 api key
-	tencentStep      int // 0: 输入 name, 1: 输入 api key
+	apiStep          int // 0: 输入 name, 1: 输入 api key (通用)
 	pendingSaveName  string           // 待保存的名字（用于覆盖/另存为）
 	existingProfile  *profile.Profile // 已存在的 profile（用于显示 diff）
 	saveOriginalName string           // 保存界面预填的原始名字（用于 hint 样式）
@@ -61,7 +80,7 @@ func NewModel() Model {
 		state:       viewList,
 		input:       ti,
 		apiKeyInput: aki,
-		zaiStep:     0,
+		apiStep:     0,
 	}
 	m.loadData()
 	return m
@@ -109,6 +128,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.state {
 	case viewList:
 		return m.updateList(msg)
+	case viewCreateMenu:
+		return m.updateCreateMenu(msg)
 	case viewPreview:
 		return m.updatePreview(msg)
 	case viewSave:
@@ -121,10 +142,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSaveZAI(msg)
 	case viewSaveTencentCloud:
 		return m.updateSaveTencentCloud(msg)
+	case viewSaveKimi:
+		return m.updateSaveKimi(msg)
 	case viewConfirmApply:
 		return m.updateConfirmApply(msg)
 	case viewConfirmDelete:
 		return m.updateConfirmDelete(msg)
+	case viewConfirmRun:
+		return m.updateConfirmRun(msg)
 	}
 	return m, nil
 }
@@ -153,9 +178,61 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.safeProfileIndex() {
 			m.state = viewPreview
 		}
+	case "n":
+		// 进入创建预设菜单
+		m.state = viewCreateMenu
+		m.createMenuCursor = 0
+	case "d":
+		if m.safeProfileIndex() {
+			m.state = viewConfirmDelete
+		}
+	case "r":
+		if m.safeProfileIndex() {
+			m.state = viewConfirmRun
+		}
+	}
+	return m, nil
+}
+
+// updateCreateMenu 处理创建预设菜单
+func (m Model) updateCreateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "esc", "q":
+		m.state = viewList
+		return m, nil
+	case "up", "k":
+		if m.createMenuCursor > 0 {
+			m.createMenuCursor--
+		}
+	case "down", "j":
+		if m.createMenuCursor < len(createMenuItems)-1 {
+			m.createMenuCursor++
+		}
+	case "enter":
+		return m.handleCreateMenuSelection()
+	case "s", "m", "z", "t":
+		// 支持快捷键直接选择
+		for i, item := range createMenuItems {
+			if item.key == keyMsg.String() {
+				m.createMenuCursor = i
+				return m.handleCreateMenuSelection()
+			}
+		}
+	}
+	return m, nil
+}
+
+// handleCreateMenuSelection 处理创建菜单选择
+func (m *Model) handleCreateMenuSelection() (tea.Model, tea.Cmd) {
+	item := createMenuItems[m.createMenuCursor]
+	switch item.key {
 	case "s":
+		// 保存当前设置
 		m.state = viewSave
-		// 如果有选中的 profile，将其名字设为 placeholder
 		if m.safeProfileIndex() {
 			m.saveOriginalName = m.profiles[m.cursor].Name
 			m.input.Placeholder = m.profiles[m.cursor].Name
@@ -166,9 +243,20 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		m.input.Focus()
 		return m, textinput.Blink
+	case "m":
+		// 创建 Kimi 配置
+		m.state = viewSaveKimi
+		m.apiStep = 0
+		m.input.SetValue("")
+		m.input.Placeholder = "Kimi Coding"
+		m.saveOriginalName = "Kimi Coding"
+		m.apiKeyInput.SetValue("")
+		m.input.Focus()
+		return m, textinput.Blink
 	case "z":
+		// 创建 z.ai 配置
 		m.state = viewSaveZAI
-		m.zaiStep = 0
+		m.apiStep = 0
 		m.input.SetValue("")
 		m.input.Placeholder = "z.ai Coding Plan"
 		m.saveOriginalName = "z.ai Coding Plan"
@@ -176,19 +264,17 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, textinput.Blink
 	case "t":
+		// 创建腾讯云配置
 		m.state = viewSaveTencentCloud
-		m.tencentStep = 0
+		m.apiStep = 0
 		m.input.SetValue("")
 		m.input.Placeholder = "Tencent Coding Plan"
 		m.saveOriginalName = "Tencent Coding Plan"
 		m.apiKeyInput.SetValue("")
 		m.input.Focus()
 		return m, textinput.Blink
-	case "d":
-		if m.safeProfileIndex() {
-			m.state = viewConfirmDelete
-		}
 	}
+	m.state = viewList
 	return m, nil
 }
 
@@ -424,7 +510,7 @@ func (m *Model) updateSaveAPI(msg tea.Msg, cfg apiProfileConfig) (tea.Model, tea
 func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cfg := apiProfileConfig{
 		name:           "z.ai",
-		step:           &m.zaiStep,
+		step:           &m.apiStep,
 		defaultName:    "z.ai Coding Plan",
 		profileGetter:  profile.DefaultZAIProfile,
 		successMessage: "✓ Saved z.ai profile",
@@ -435,10 +521,21 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateSaveTencentCloud(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cfg := apiProfileConfig{
 		name:           "TencentCloud",
-		step:           &m.tencentStep,
+		step:           &m.apiStep,
 		defaultName:    "Tencent Coding Plan",
 		profileGetter:  profile.DefaultTencentCloudProfile,
 		successMessage: "✓ Saved TencentCloud profile",
+	}
+	return m.updateSaveAPI(msg, cfg)
+}
+
+func (m Model) updateSaveKimi(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cfg := apiProfileConfig{
+		name:           "Kimi",
+		step:           &m.apiStep,
+		defaultName:    "Kimi Coding",
+		profileGetter:  profile.DefaultKimiProfile,
+		successMessage: "✓ Saved Kimi profile",
 	}
 	return m.updateSaveAPI(msg, cfg)
 }
@@ -496,10 +593,48 @@ func (m Model) updateConfirmDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateConfirmRun(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "y", "Y":
+		if !m.safeProfileIndex() {
+			m.state = viewList
+			return m, nil
+		}
+		p := m.profiles[m.cursor]
+
+		// 准备运行目录
+		runDir, err := runner.PrepareRunDir(p.Name, p.Settings)
+		if err != nil {
+			m.message = fmt.Sprintf("Error preparing run dir: %v", err)
+			m.state = viewList
+			return m, nil
+		}
+
+		m.state = viewList
+		// 使用 tea.ExecProcess 启动 claude，它会接管终端
+		cmd := runner.BuildCommand(runDir)
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+	case "n", "N", "esc":
+		m.state = viewList
+	}
+	return m, nil
+}
+
 func (m Model) View() string {
 	switch m.state {
 	case viewList:
 		return m.viewList()
+	case viewCreateMenu:
+		return m.viewCreateMenu()
 	case viewPreview:
 		return m.viewPreview()
 	case viewSave:
@@ -512,10 +647,14 @@ func (m Model) View() string {
 		return m.viewSaveZAI()
 	case viewSaveTencentCloud:
 		return m.viewSaveTencentCloud()
+	case viewSaveKimi:
+		return m.viewSaveKimi()
 	case viewConfirmApply:
 		return m.viewConfirmApply()
 	case viewConfirmDelete:
 		return m.viewConfirmDelete()
+	case viewConfirmRun:
+		return m.viewConfirmRun()
 	}
 	return ""
 }
@@ -601,8 +740,39 @@ func (m Model) viewList() string {
 	}
 
 	b.WriteString("\n")
-	help := "[enter] apply  [p] preview  [s] save  [z] z.ai  [t] tencent  [d] delete  [q] quit"
+	help := "[enter] apply  [p] preview  [r] run  [n] new  [d] delete  [q] quit"
 	b.WriteString(helpStyle.Render(help))
+
+	return b.String()
+}
+
+// viewCreateMenu 显示创建预设菜单
+func (m Model) viewCreateMenu() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Create New Profile"))
+	b.WriteString("\n\n")
+
+	for i, item := range createMenuItems {
+		cursor := "  "
+		if i == m.createMenuCursor {
+			cursor = "> "
+		}
+
+		icon := "○"
+		labelStr := item.label
+		descStr := dimStyle.Render(item.description)
+		if i == m.createMenuCursor {
+			icon = selectedStyle.Render("●")
+			labelStr = selectedStyle.Render(item.label)
+		}
+
+		b.WriteString(fmt.Sprintf("%s%s %s\n", cursor, icon, labelStr))
+		b.WriteString(fmt.Sprintf("    %s\n", descStr))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("[↑/↓] navigate  [enter] select  [s/m/z/t] quick select  [esc] cancel"))
 
 	return b.String()
 }
@@ -678,7 +848,7 @@ func (m Model) viewSaveZAI() string {
 	b.WriteString(titleStyle.Render("Create z.ai API Profile"))
 	b.WriteString("\n\n")
 
-	if m.zaiStep == 0 {
+	if m.apiStep == 0 {
 		b.WriteString(dimStyle.Render("Step 1/2: Enter profile name"))
 		b.WriteString("\n\n")
 		b.WriteString("Profile name: ")
@@ -723,7 +893,7 @@ func (m Model) viewSaveTencentCloud() string {
 	b.WriteString(titleStyle.Render("Create TencentCloud CodingPlan Profile"))
 	b.WriteString("\n\n")
 
-	if m.tencentStep == 0 {
+	if m.apiStep == 0 {
 		b.WriteString(dimStyle.Render("Step 1/2: Enter profile name"))
 		b.WriteString("\n\n")
 		b.WriteString("Profile name: ")
@@ -760,6 +930,49 @@ func (m Model) viewSaveTencentCloud() string {
 	return b.String()
 }
 
+func (m Model) viewSaveKimi() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Create Kimi Official API Profile"))
+	b.WriteString("\n\n")
+
+	if m.apiStep == 0 {
+		b.WriteString(dimStyle.Render("Step 1/2: Enter profile name"))
+		b.WriteString("\n\n")
+		b.WriteString("Profile name: ")
+		b.WriteString(m.input.View())
+	} else {
+		b.WriteString(dimStyle.Render("Step 2/2: Enter your Kimi API key"))
+		b.WriteString("\n\n")
+		b.WriteString("Profile name: ")
+		b.WriteString(activeStyle.Render(m.input.Value()))
+		b.WriteString("\n\n")
+		b.WriteString("API Key: ")
+		b.WriteString(m.apiKeyInput.View())
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  (The key will be masked for security)"))
+	}
+
+	b.WriteString("\n\n")
+	b.WriteString(dimStyle.Render("This profile will include:"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • ANTHROPIC_BASE_URL: https://api.kimi.com/coding/"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • API_TIMEOUT_MS: 3000000"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1"))
+
+	if m.message != "" {
+		b.WriteString("\n")
+		b.WriteString(messageStyle.Render(m.message))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("[enter] next  [esc] cancel"))
+
+	return b.String()
+}
+
 func (m Model) viewConfirmApply() string {
 	var b strings.Builder
 
@@ -779,6 +992,21 @@ func (m Model) viewConfirmDelete() string {
 	b.WriteString(titleStyle.Render("Confirm Delete"))
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("Delete profile '%s'?\n\n", removedStyle.Render(p.Name)))
+	b.WriteString(helpStyle.Render("[y] yes  [n/esc] no"))
+
+	return b.String()
+}
+
+func (m Model) viewConfirmRun() string {
+	var b strings.Builder
+
+	p := m.profiles[m.cursor]
+	runDir := runner.RunDir()
+	b.WriteString(titleStyle.Render("Confirm Run Profile"))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("Run claude with profile '%s'?\n\n", selectedStyle.Render(p.Name)))
+	b.WriteString(dimStyle.Render(fmt.Sprintf("Config dir: %s\n", filepath.Join(runDir, p.Name))))
+	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("[y] yes  [n/esc] no"))
 
 	return b.String()
