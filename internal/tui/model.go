@@ -367,6 +367,16 @@ func (m *Model) updateSaveAPI(msg tea.Msg, cfg apiProfileConfig) (tea.Model, tea
 				// 进入第二步：输入 API key
 				*cfg.step = 1
 				m.message = ""
+
+				// 检查 profile 是否已存在，如果是则预填 API key
+				if existing, err := profile.GetByName(name); err == nil {
+					if env, ok := existing.Settings["env"].(map[string]interface{}); ok {
+						if token, ok := env["ANTHROPIC_AUTH_TOKEN"].(string); ok && token != "" {
+							m.apiKeyInput.SetValue(token)
+						}
+					}
+				}
+
 				m.apiKeyInput.Focus()
 				return m, textinput.Blink
 			} else {

@@ -104,6 +104,16 @@ func Delete(name string) error {
 	return os.Remove(filepath.Join(ProfilesDir(), name+".json"))
 }
 
+// GetByName 根据名称加载单个 profile
+func GetByName(name string) (*Profile, error) {
+	path := filepath.Join(ProfilesDir(), name+".json")
+	settings, err := loadJSON(path)
+	if err != nil {
+		return nil, err
+	}
+	return &Profile{Name: name, Settings: settings}, nil
+}
+
 func Flatten(m map[string]interface{}, prefix string) map[string]string {
 	result := make(map[string]string)
 	for k, v := range m {
