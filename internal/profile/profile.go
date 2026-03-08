@@ -182,6 +182,7 @@ func GetSummary(settings map[string]interface{}) (model, baseURL string) {
 // DefaultZAIProfile 返回带有 z.ai 配置的默认 profile
 func DefaultZAIProfile() map[string]interface{} {
 	return map[string]interface{}{
+		"model": "opus",
 		"env": map[string]interface{}{
 			"ANTHROPIC_AUTH_TOKEN":                    "your_zai_api_key",
 			"ANTHROPIC_BASE_URL":                      "https://api.z.ai/api/anthropic",
@@ -189,6 +190,22 @@ func DefaultZAIProfile() map[string]interface{} {
 			"ANTHROPIC_DEFAULT_HAIKU_MODEL":           "glm-4.5-air",
 			"ANTHROPIC_DEFAULT_SONNET_MODEL":          "glm-4.7",
 			"ANTHROPIC_DEFAULT_OPUS_MODEL":            "glm-5",
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+		},
+	}
+}
+
+// DefaultTencentCloudProfile 返回带有腾讯云 CodingPlan 配置的默认 profile
+func DefaultTencentCloudProfile() map[string]interface{} {
+	return map[string]interface{}{
+		"model": "opus",
+		"env": map[string]interface{}{
+			"ANTHROPIC_AUTH_TOKEN":                    "your_api_key",
+			"ANTHROPIC_BASE_URL":                      "https://api.lkeap.cloud.tencent.com/coding/anthropic",
+			"API_TIMEOUT_MS":                          "3000000",
+			"ANTHROPIC_DEFAULT_HAIKU_MODEL":           "tc-code-latest",
+			"ANTHROPIC_DEFAULT_SONNET_MODEL":          "kimi-k2.5",
+			"ANTHROPIC_DEFAULT_OPUS_MODEL":            "minimax-m2.5",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 		},
 	}

@@ -16,22 +16,29 @@ const (
 	viewList viewState = iota
 	viewPreview
 	viewSave
+	viewSaveOverwrite    // 覆盖确认（显示diff）
+	viewSaveNewName      // 另存为新名字
 	viewSaveZAI
+	viewSaveTencentCloud
 	viewConfirmApply
 	viewConfirmDelete
 )
 
 type Model struct {
-	state     viewState
-	profiles  []profile.Profile
-	current   map[string]interface{}
-	cursor    int
-	input     textinput.Model
-	apiKeyInput textinput.Model
-	zaiStep   int // 0: 输入 name, 1: 输入 api key
-	message   string
-	width     int
-	height    int
+	state            viewState
+	profiles         []profile.Profile
+	current          map[string]interface{}
+	cursor           int
+	input            textinput.Model
+	apiKeyInput      textinput.Model
+	zaiStep          int // 0: 输入 name, 1: 输入 api key
+	tencentStep      int // 0: 输入 name, 1: 输入 api key
+	pendingSaveName  string           // 待保存的名字（用于覆盖/另存为）
+	existingProfile  *profile.Profile // 已存在的 profile（用于显示 diff）
+	saveOriginalName string           // 保存界面预填的原始名字（用于 hint 样式）
+	message          string
+	width            int
+	height           int
 }
 
 func NewModel() Model {
@@ -90,8 +97,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updatePreview(msg)
 	case viewSave:
 		return m.updateSave(msg)
+	case viewSaveOverwrite:
+		return m.updateSaveOverwrite(msg)
+	case viewSaveNewName:
+		return m.updateSaveNewName(msg)
 	case viewSaveZAI:
 		return m.updateSaveZAI(msg)
+	case viewSaveTencentCloud:
+		return m.updateSaveTencentCloud(msg)
 	case viewConfirmApply:
 		return m.updateConfirmApply(msg)
 	case viewConfirmDelete:
@@ -126,6 +139,14 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "s":
 		m.state = viewSave
+		// 如果有选中的 profile，将其名字设为 placeholder
+		if len(m.profiles) > 0 && m.cursor < len(m.profiles) {
+			m.saveOriginalName = m.profiles[m.cursor].Name
+			m.input.Placeholder = m.profiles[m.cursor].Name
+		} else {
+			m.saveOriginalName = ""
+			m.input.Placeholder = "profile-name"
+		}
 		m.input.SetValue("")
 		m.input.Focus()
 		return m, textinput.Blink
@@ -133,6 +154,17 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewSaveZAI
 		m.zaiStep = 0
 		m.input.SetValue("")
+		m.input.Placeholder = "z.ai Coding Plan"
+		m.saveOriginalName = "z.ai Coding Plan"
+		m.apiKeyInput.SetValue("")
+		m.input.Focus()
+		return m, textinput.Blink
+	case "t":
+		m.state = viewSaveTencentCloud
+		m.tencentStep = 0
+		m.input.SetValue("")
+		m.input.Placeholder = "Tencent Coding Plan"
+		m.saveOriginalName = "Tencent Coding Plan"
 		m.apiKeyInput.SetValue("")
 		m.input.Focus()
 		return m, textinput.Blink
@@ -164,12 +196,106 @@ func (m Model) updateSave(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.state = viewList
 			m.message = ""
+			m.saveOriginalName = ""
+			m.input.Placeholder = "profile-name"
+			return m, nil
+		case "enter":
+			name := strings.TrimSpace(m.input.Value())
+			// 如果输入为空但有原始名字（placeholder），使用它
+			if name == "" && m.saveOriginalName != "" {
+				name = m.saveOriginalName
+			}
+			if name == "" {
+				m.message = "Profile name cannot be empty"
+				return m, nil
+			}
+			// 检查是否存在同名 profile
+			for i, p := range m.profiles {
+				if p.Name == name {
+					m.pendingSaveName = name
+					m.existingProfile = &m.profiles[i]
+					m.state = viewSaveOverwrite
+					m.saveOriginalName = ""
+					m.input.Placeholder = "profile-name"
+					return m, nil
+				}
+			}
+			// 不存在，直接保存
+			if err := profile.Save(name, m.current); err != nil {
+				m.message = fmt.Sprintf("Error: %v", err)
+			} else {
+				m.message = fmt.Sprintf("✓ Saved profile: %s", name)
+				m.loadData()
+			}
+			m.state = viewList
+			m.saveOriginalName = ""
+			m.input.Placeholder = "profile-name"
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// updateSaveOverwrite 处理覆盖确认界面
+func (m Model) updateSaveOverwrite(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "y", "Y":
+		// 确认覆盖
+		if err := profile.Save(m.pendingSaveName, m.current); err != nil {
+			m.message = fmt.Sprintf("Error: %v", err)
+		} else {
+			m.message = fmt.Sprintf("✓ Overwritten profile: %s", m.pendingSaveName)
+			m.loadData()
+		}
+		m.state = viewList
+		m.pendingSaveName = ""
+		m.existingProfile = nil
+		return m, nil
+	case "n", "N":
+		// 另存为新名字
+		m.state = viewSaveNewName
+		m.input.SetValue("")
+		m.input.Focus()
+		return m, textinput.Blink
+	case "esc":
+		// 取消
+		m.state = viewList
+		m.pendingSaveName = ""
+		m.existingProfile = nil
+		return m, nil
+	}
+	return m, nil
+}
+
+// updateSaveNewName 处理另存为新名字界面
+func (m Model) updateSaveNewName(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "esc":
+			m.state = viewList
+			m.pendingSaveName = ""
+			m.existingProfile = nil
+			m.message = ""
 			return m, nil
 		case "enter":
 			name := strings.TrimSpace(m.input.Value())
 			if name == "" {
 				m.message = "Profile name cannot be empty"
 				return m, nil
+			}
+			// 再次检查是否存在同名
+			for _, p := range m.profiles {
+				if p.Name == name {
+					m.message = fmt.Sprintf("Profile '%s' already exists", name)
+					return m, nil
+				}
 			}
 			if err := profile.Save(name, m.current); err != nil {
 				m.message = fmt.Sprintf("Error: %v", err)
@@ -178,6 +304,8 @@ func (m Model) updateSave(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loadData()
 			}
 			m.state = viewList
+			m.pendingSaveName = ""
+			m.existingProfile = nil
 			return m, nil
 		}
 	}
@@ -196,11 +324,17 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.SetValue("")
 			m.apiKeyInput.SetValue("")
 			m.message = ""
+			m.saveOriginalName = ""
+			m.input.Placeholder = "profile-name"
 			return m, nil
 		case "enter":
 			if m.zaiStep == 0 {
 				// 第一步：检查 name
 				name := strings.TrimSpace(m.input.Value())
+				if name == "" && m.saveOriginalName != "" {
+					name = m.saveOriginalName
+					m.input.SetValue(name)
+				}
 				if name == "" {
 					m.message = "Profile name cannot be empty"
 					return m, nil
@@ -213,6 +347,9 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				// 第二步：保存 profile
 				name := strings.TrimSpace(m.input.Value())
+				if name == "" && m.saveOriginalName != "" {
+					name = m.saveOriginalName
+				}
 				apiKey := strings.TrimSpace(m.apiKeyInput.Value())
 				if apiKey == "" {
 					m.message = "API key cannot be empty"
@@ -233,6 +370,8 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.zaiStep = 0
 				m.input.SetValue("")
 				m.apiKeyInput.SetValue("")
+				m.saveOriginalName = ""
+				m.input.Placeholder = "profile-name"
 				return m, nil
 			}
 		}
@@ -240,6 +379,77 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.zaiStep == 0 {
+		m.input, cmd = m.input.Update(msg)
+	} else {
+		m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m Model) updateSaveTencentCloud(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "esc":
+			m.state = viewList
+			m.tencentStep = 0
+			m.input.SetValue("")
+			m.apiKeyInput.SetValue("")
+			m.message = ""
+			m.saveOriginalName = ""
+			m.input.Placeholder = "profile-name"
+			return m, nil
+		case "enter":
+			if m.tencentStep == 0 {
+				// 第一步：检查 name
+				name := strings.TrimSpace(m.input.Value())
+				// 如果为空但有默认名字，使用默认名字
+				if name == "" && m.saveOriginalName != "" {
+					name = m.saveOriginalName
+				}
+				if name == "" {
+					m.message = "Profile name cannot be empty"
+					return m, nil
+				}
+				// 进入第二步：输入 API key
+				m.tencentStep = 1
+				m.message = ""
+				m.apiKeyInput.Focus()
+				return m, textinput.Blink
+			} else {
+				// 第二步：保存 profile
+				name := strings.TrimSpace(m.input.Value())
+				if name == "" && m.saveOriginalName != "" {
+					name = m.saveOriginalName
+				}
+				apiKey := strings.TrimSpace(m.apiKeyInput.Value())
+				if apiKey == "" {
+					m.message = "API key cannot be empty"
+					return m, nil
+				}
+				tencentProfile := profile.DefaultTencentCloudProfile()
+				// 将用户输入的 API key 设置到 profile 中
+				if env, ok := tencentProfile["env"].(map[string]interface{}); ok {
+					env["ANTHROPIC_AUTH_TOKEN"] = apiKey
+				}
+				if err := profile.Save(name, tencentProfile); err != nil {
+					m.message = fmt.Sprintf("Error: %v", err)
+				} else {
+					m.message = fmt.Sprintf("✓ Saved TencentCloud profile: %s", name)
+					m.loadData()
+				}
+				m.state = viewList
+				m.tencentStep = 0
+				m.input.SetValue("")
+				m.apiKeyInput.SetValue("")
+				m.saveOriginalName = ""
+				m.input.Placeholder = "profile-name"
+				return m, nil
+			}
+		}
+	}
+
+	var cmd tea.Cmd
+	if m.tencentStep == 0 {
 		m.input, cmd = m.input.Update(msg)
 	} else {
 		m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
@@ -300,8 +510,14 @@ func (m Model) View() string {
 		return m.viewPreview()
 	case viewSave:
 		return m.viewSave()
+	case viewSaveOverwrite:
+		return m.viewSaveOverwrite()
+	case viewSaveNewName:
+		return m.viewSaveNewName()
 	case viewSaveZAI:
 		return m.viewSaveZAI()
+	case viewSaveTencentCloud:
+		return m.viewSaveTencentCloud()
 	case viewConfirmApply:
 		return m.viewConfirmApply()
 	case viewConfirmDelete:
@@ -391,7 +607,7 @@ func (m Model) viewList() string {
 	}
 
 	b.WriteString("\n")
-	help := "[enter] apply  [p] preview  [s] save current  [z] new z.ai  [d] delete  [q] quit"
+	help := "[enter] apply  [p] preview  [s] save  [z] z.ai  [t] tencent  [d] delete  [q] quit"
 	b.WriteString(helpStyle.Render(help))
 
 	return b.String()
@@ -443,6 +659,13 @@ func (m Model) viewSave() string {
 	b.WriteString("\n\n")
 	b.WriteString("Profile name: ")
 	b.WriteString(m.input.View())
+
+	// 如果输入为空且有原始名字（作为 placeholder），显示提示
+	inputVal := strings.TrimSpace(m.input.Value())
+	if inputVal == "" && m.saveOriginalName != "" {
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  (press [enter] to overwrite '" + m.saveOriginalName + "' or type new name)"))
+	}
 
 	if m.message != "" {
 		b.WriteString("\n\n")
@@ -500,6 +723,49 @@ func (m Model) viewSaveZAI() string {
 	return b.String()
 }
 
+func (m Model) viewSaveTencentCloud() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Create TencentCloud CodingPlan Profile"))
+	b.WriteString("\n\n")
+
+	if m.tencentStep == 0 {
+		b.WriteString(dimStyle.Render("Step 1/2: Enter profile name"))
+		b.WriteString("\n\n")
+		b.WriteString("Profile name: ")
+		b.WriteString(m.input.View())
+	} else {
+		b.WriteString(dimStyle.Render("Step 2/2: Enter your TencentCloud API key"))
+		b.WriteString("\n\n")
+		b.WriteString("Profile name: ")
+		b.WriteString(activeStyle.Render(m.input.Value()))
+		b.WriteString("\n\n")
+		b.WriteString("API Key: ")
+		b.WriteString(m.apiKeyInput.View())
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  (The key will be masked for security)"))
+	}
+
+	b.WriteString("\n\n")
+	b.WriteString(dimStyle.Render("This profile will include:"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • ANTHROPIC_BASE_URL: https://api.lkeap.cloud.tencent.com/coding/anthropic"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  • Model mappings: haiku→tc-code-latest, sonnet→kimi-k2.5, opus→minimax-m2.5"))
+
+	if m.message != "" {
+		b.WriteString("\n")
+		b.WriteString(messageStyle.Render(m.message))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("[enter] next  [esc] cancel"))
+
+	return b.String()
+}
+
 func (m Model) viewConfirmApply() string {
 	var b strings.Builder
 
@@ -520,6 +786,73 @@ func (m Model) viewConfirmDelete() string {
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("Delete profile '%s'?\n\n", removedStyle.Render(p.Name)))
 	b.WriteString(helpStyle.Render("[y] yes  [n/esc] no"))
+
+	return b.String()
+}
+
+// viewSaveOverwrite 显示覆盖确认界面（带 diff 预览）
+func (m Model) viewSaveOverwrite() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Overwrite Profile"))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("Profile '%s' already exists.\n\n", selectedStyle.Render(m.pendingSaveName)))
+	b.WriteString(dimStyle.Render("Changes (saved profile → current settings):"))
+	b.WriteString("\n\n")
+
+	// 显示 diff：从已有 profile 到当前 settings
+	if m.existingProfile != nil {
+		diff := profile.Diff(m.existingProfile.Settings, m.current)
+
+		var lines []string
+		for _, d := range diff {
+			switch d.Status {
+			case profile.DiffUnchanged:
+				val := profile.MaskSensitive(d.Key, d.OldValue)
+				lines = append(lines, unchangedStyle.Render(fmt.Sprintf("  %s: %s", d.Key, val)))
+			case profile.DiffModified:
+				oldVal := profile.MaskSensitive(d.Key, d.OldValue)
+				newVal := profile.MaskSensitive(d.Key, d.NewValue)
+				lines = append(lines, fmt.Sprintf("  %s:", d.Key))
+				lines = append(lines, removedStyle.Render(fmt.Sprintf("    - %s", oldVal)))
+				lines = append(lines, addedStyle.Render(fmt.Sprintf("    + %s", newVal)))
+			case profile.DiffAdded:
+				newVal := profile.MaskSensitive(d.Key, d.NewValue)
+				lines = append(lines, addedStyle.Render(fmt.Sprintf("  + %s: %s", d.Key, newVal)))
+			case profile.DiffRemoved:
+				oldVal := profile.MaskSensitive(d.Key, d.OldValue)
+				lines = append(lines, removedStyle.Render(fmt.Sprintf("  - %s: %s", d.Key, oldVal)))
+			}
+		}
+
+		content := strings.Join(lines, "\n")
+		b.WriteString(boxStyle.Render(content))
+	}
+
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render("[y] overwrite  [n] save as new  [esc] cancel"))
+
+	return b.String()
+}
+
+// viewSaveNewName 显示另存为新名字界面
+func (m Model) viewSaveNewName() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Save as New Profile"))
+	b.WriteString("\n\n")
+	b.WriteString(dimStyle.Render(fmt.Sprintf("Original name: %s", m.pendingSaveName)))
+	b.WriteString("\n\n")
+	b.WriteString("New profile name: ")
+	b.WriteString(m.input.View())
+
+	if m.message != "" {
+		b.WriteString("\n\n")
+		b.WriteString(messageStyle.Render(m.message))
+	}
+
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render("[enter] save  [esc] cancel"))
 
 	return b.String()
 }
