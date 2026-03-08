@@ -41,6 +41,11 @@ type Model struct {
 	height           int
 }
 
+// safeProfileIndex 检查 cursor 是否在有效范围内
+func (m Model) safeProfileIndex() bool {
+	return m.cursor >= 0 && m.cursor < len(m.profiles)
+}
+
 func NewModel() Model {
 	ti := textinput.New()
 	ti.Placeholder = "profile-name"
@@ -70,8 +75,19 @@ func (m *Model) loadData() {
 		m.current = current
 	}
 
-	profiles, _ := profile.List()
+	profiles, loadErrors := profile.List()
 	m.profiles = profiles
+
+	// 如果有加载错误，显示警告信息
+	if len(loadErrors) > 0 {
+		var errMsgs []string
+		for _, e := range loadErrors {
+			errMsgs = append(errMsgs, fmt.Sprintf("%s: %v", e.Name, e.Err))
+		}
+		m.message = fmt.Sprintf("Warning: failed to load %d profile(s): %s", len(loadErrors), strings.Join(errMsgs, "; "))
+	} else {
+		m.message = ""
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -130,17 +146,17 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 	case "enter":
-		if len(m.profiles) > 0 {
+		if m.safeProfileIndex() {
 			m.state = viewConfirmApply
 		}
 	case "p":
-		if len(m.profiles) > 0 {
+		if m.safeProfileIndex() {
 			m.state = viewPreview
 		}
 	case "s":
 		m.state = viewSave
 		// 如果有选中的 profile，将其名字设为 placeholder
-		if len(m.profiles) > 0 && m.cursor < len(m.profiles) {
+		if m.safeProfileIndex() {
 			m.saveOriginalName = m.profiles[m.cursor].Name
 			m.input.Placeholder = m.profiles[m.cursor].Name
 		} else {
@@ -169,7 +185,7 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, textinput.Blink
 	case "d":
-		if len(m.profiles) > 0 {
+		if m.safeProfileIndex() {
 			m.state = viewConfirmDelete
 		}
 	}
@@ -315,12 +331,21 @@ func (m Model) updateSaveNewName(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
+// apiProfileConfig 定义 API profile 的配置
+type apiProfileConfig struct {
+	name             string
+	step             *int
+	defaultName      string
+	profileGetter    func() map[string]interface{}
+	successMessage   string
+}
+
+func (m *Model) updateSaveAPI(msg tea.Msg, cfg apiProfileConfig) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
 		case "esc":
 			m.state = viewList
-			m.zaiStep = 0
+			*cfg.step = 0
 			m.input.SetValue("")
 			m.apiKeyInput.SetValue("")
 			m.message = ""
@@ -328,7 +353,7 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.Placeholder = "profile-name"
 			return m, nil
 		case "enter":
-			if m.zaiStep == 0 {
+			if *cfg.step == 0 {
 				// 第一步：检查 name
 				name := strings.TrimSpace(m.input.Value())
 				if name == "" && m.saveOriginalName != "" {
@@ -340,7 +365,7 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				// 进入第二步：输入 API key
-				m.zaiStep = 1
+				*cfg.step = 1
 				m.message = ""
 				m.apiKeyInput.Focus()
 				return m, textinput.Blink
@@ -355,19 +380,19 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.message = "API key cannot be empty"
 					return m, nil
 				}
-				zaiProfile := profile.DefaultZAIProfile()
+				apiProfile := cfg.profileGetter()
 				// 将用户输入的 API key 设置到 profile 中
-				if env, ok := zaiProfile["env"].(map[string]interface{}); ok {
+				if env, ok := apiProfile["env"].(map[string]interface{}); ok {
 					env["ANTHROPIC_AUTH_TOKEN"] = apiKey
 				}
-				if err := profile.Save(name, zaiProfile); err != nil {
+				if err := profile.Save(name, apiProfile); err != nil {
 					m.message = fmt.Sprintf("Error: %v", err)
 				} else {
-					m.message = fmt.Sprintf("✓ Saved z.ai profile: %s", name)
+					m.message = cfg.successMessage + ": " + name
 					m.loadData()
 				}
 				m.state = viewList
-				m.zaiStep = 0
+				*cfg.step = 0
 				m.input.SetValue("")
 				m.apiKeyInput.SetValue("")
 				m.saveOriginalName = ""
@@ -378,7 +403,7 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	if m.zaiStep == 0 {
+	if *cfg.step == 0 {
 		m.input, cmd = m.input.Update(msg)
 	} else {
 		m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
@@ -386,75 +411,26 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateSaveTencentCloud(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch keyMsg.String() {
-		case "esc":
-			m.state = viewList
-			m.tencentStep = 0
-			m.input.SetValue("")
-			m.apiKeyInput.SetValue("")
-			m.message = ""
-			m.saveOriginalName = ""
-			m.input.Placeholder = "profile-name"
-			return m, nil
-		case "enter":
-			if m.tencentStep == 0 {
-				// 第一步：检查 name
-				name := strings.TrimSpace(m.input.Value())
-				// 如果为空但有默认名字，使用默认名字
-				if name == "" && m.saveOriginalName != "" {
-					name = m.saveOriginalName
-				}
-				if name == "" {
-					m.message = "Profile name cannot be empty"
-					return m, nil
-				}
-				// 进入第二步：输入 API key
-				m.tencentStep = 1
-				m.message = ""
-				m.apiKeyInput.Focus()
-				return m, textinput.Blink
-			} else {
-				// 第二步：保存 profile
-				name := strings.TrimSpace(m.input.Value())
-				if name == "" && m.saveOriginalName != "" {
-					name = m.saveOriginalName
-				}
-				apiKey := strings.TrimSpace(m.apiKeyInput.Value())
-				if apiKey == "" {
-					m.message = "API key cannot be empty"
-					return m, nil
-				}
-				tencentProfile := profile.DefaultTencentCloudProfile()
-				// 将用户输入的 API key 设置到 profile 中
-				if env, ok := tencentProfile["env"].(map[string]interface{}); ok {
-					env["ANTHROPIC_AUTH_TOKEN"] = apiKey
-				}
-				if err := profile.Save(name, tencentProfile); err != nil {
-					m.message = fmt.Sprintf("Error: %v", err)
-				} else {
-					m.message = fmt.Sprintf("✓ Saved TencentCloud profile: %s", name)
-					m.loadData()
-				}
-				m.state = viewList
-				m.tencentStep = 0
-				m.input.SetValue("")
-				m.apiKeyInput.SetValue("")
-				m.saveOriginalName = ""
-				m.input.Placeholder = "profile-name"
-				return m, nil
-			}
-		}
+func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cfg := apiProfileConfig{
+		name:           "z.ai",
+		step:           &m.zaiStep,
+		defaultName:    "z.ai Coding Plan",
+		profileGetter:  profile.DefaultZAIProfile,
+		successMessage: "✓ Saved z.ai profile",
 	}
+	return m.updateSaveAPI(msg, cfg)
+}
 
-	var cmd tea.Cmd
-	if m.tencentStep == 0 {
-		m.input, cmd = m.input.Update(msg)
-	} else {
-		m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
+func (m Model) updateSaveTencentCloud(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cfg := apiProfileConfig{
+		name:           "TencentCloud",
+		step:           &m.tencentStep,
+		defaultName:    "Tencent Coding Plan",
+		profileGetter:  profile.DefaultTencentCloudProfile,
+		successMessage: "✓ Saved TencentCloud profile",
 	}
-	return m, cmd
+	return m.updateSaveAPI(msg, cfg)
 }
 
 func (m Model) updateConfirmApply(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -464,6 +440,10 @@ func (m Model) updateConfirmApply(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch keyMsg.String() {
 	case "y", "Y":
+		if !m.safeProfileIndex() {
+			m.state = viewList
+			return m, nil
+		}
 		p := m.profiles[m.cursor]
 		if err := profile.ApplyProfile(p); err != nil {
 			m.message = fmt.Sprintf("Error: %v", err)
@@ -485,6 +465,10 @@ func (m Model) updateConfirmDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch keyMsg.String() {
 	case "y", "Y":
+		if !m.safeProfileIndex() {
+			m.state = viewList
+			return m, nil
+		}
 		p := m.profiles[m.cursor]
 		if err := profile.Delete(p.Name); err != nil {
 			m.message = fmt.Sprintf("Error: %v", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -48,31 +49,50 @@ func ApplyProfile(p Profile) error {
 	return saveJSON(SettingsPath(), p.Settings)
 }
 
-func List() ([]Profile, error) {
+// ListError 记录加载 profile 时的错误
+type ListError struct {
+	Name string
+	Err  error
+}
+
+func List() ([]Profile, []ListError) {
 	dir := ProfilesDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, []ListError{{Name: "", Err: err}}
 	}
 	var profiles []Profile
+	var loadErrors []ListError
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
 		settings, err := loadJSON(filepath.Join(dir, e.Name()))
 		if err != nil {
+			name := strings.TrimSuffix(e.Name(), ".json")
+			loadErrors = append(loadErrors, ListError{Name: name, Err: err})
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".json")
 		profiles = append(profiles, Profile{Name: name, Settings: settings})
 	}
-	return profiles, nil
+	return profiles, loadErrors
 }
 
+// invalidNameChars 定义了 profile 名称中禁止的字符
+var invalidNameChars = regexp.MustCompile(`[\\/:*?"<>|]`)
+
 func Save(name string, settings map[string]interface{}) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("profile name cannot be empty")
+	}
+	if invalidNameChars.MatchString(name) {
+		return fmt.Errorf("profile name contains invalid characters: \\ / : * ? \" < > |")
+	}
 	dir := ProfilesDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
