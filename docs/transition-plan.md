@@ -189,6 +189,7 @@ package domain
 import (
     "fmt"
     "regexp"
+    "strings"
 )
 
 var invalidNameChars = regexp.MustCompile(`[\\/:*?"<>|]`)
@@ -198,8 +199,8 @@ func ValidateProfileName(name string) error {
     if strings.TrimSpace(name) == "" {
         return fmt.Errorf("name cannot be empty")
     }
-    if invalidNameChars.MatchString(name) {
-        return fmt.Errorf("invalid character in name")
+    if match := invalidNameChars.FindString(name); match != "" {
+        return fmt.Errorf("invalid character: %s", match)
     }
     return nil
 }
@@ -536,7 +537,20 @@ func (r *ProfileRepositoryFS) Apply(p domain.Profile) error {
     if err != nil {
         return err
     }
-    return os.WriteFile(r.settingsPath, append(data, '\n'), 0644)
+
+    // 原子写入：先写临时文件，再重命名
+    tmpPath := r.settingsPath + ".tmp"
+    if err := os.WriteFile(tmpPath, append(data, '\n'), 0644); err != nil {
+        return fmt.Errorf("write temp file: %w", err)
+    }
+
+    // os.Rename 在同一文件系统上是原子操作
+    if err := os.Rename(tmpPath, r.settingsPath); err != nil {
+        os.Remove(tmpPath) // 清理临时文件
+        return fmt.Errorf("rename to settings: %w", err)
+    }
+
+    return nil
 }
 ```
 
@@ -555,6 +569,35 @@ var (
     ErrInvalidName     = errors.New("invalid profile name")
 )
 ```
+
+### 应用程序初始化
+
+重构不改变现有文件存储结构。Repository 初始化时使用现有路径：
+
+```go
+// internal/app/dependencies.go
+
+import (
+    "claude-switch/internal/repository"
+    "claude-switch/internal/service"
+)
+
+func NewApp() (*App, error) {
+    // 使用现有路径，不创建新的目录结构
+    profilesDir := filepath.Join(os.Getenv("HOME"), ".claude-switch", "profiles")
+    settingsPath := filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")
+
+    repo := repository.NewProfileRepositoryFS(profilesDir, settingsPath)
+    runner := service.NewProfileRunnerExec("claude")
+    svc := service.NewProfileService(repo, runner)
+
+    return &App{service: svc}, nil
+}
+```
+
+**文件结构保持不变：**
+- Profile 存储：`~/.claude-switch/profiles/<name>.json`
+- Claude 配置：`~/.claude/settings.json`
 
 ### Phase 2 验证清单
 
@@ -752,11 +795,25 @@ func (s *profileService) Create(name string, settings map[string]interface{}) er
 
 func (s *profileService) List() ([]domain.Profile, error) {
     profiles, errs := s.repo.List()
-    // 记录错误但返回能加载的数据
     if len(errs) > 0 {
-        // 可以在这里记录日志
+        // 返回有效数据 + 警告错误，调用方可选择处理或忽略
+        return profiles, &ListWarningError{Errors: errs}
     }
     return profiles, nil
+}
+
+// ListWarningError 表示部分 profile 加载失败的警告
+type ListWarningError struct {
+    Errors []repository.ListError
+}
+
+func (e *ListWarningError) Error() string {
+    return fmt.Sprintf("%d profiles failed to load", len(e.Errors))
+}
+
+func (e *ListWarningError) Is(target error) bool {
+    _, ok := target.(*ListWarningError)
+    return ok
 }
 
 func (s *profileService) GetByName(name string) (*domain.Profile, error) {
@@ -795,9 +852,46 @@ func (s *profileService) LoadCurrent() (map[string]interface{}, error) {
 }
 
 func (s *profileService) IsActive(p domain.Profile) bool {
-    current, _ := s.repo.LoadCurrent()
-    // 简化的比较，实际需要 flatten 后比较
-    return len(current) > 0 && current["model"] == p.Settings["model"]
+    current, err := s.repo.LoadCurrent()
+    if err != nil || len(current) == 0 {
+        return false
+    }
+
+    // 深度比较，规范化处理 JSON 类型差异
+    normalizedCurrent := normalizeSettings(current)
+    normalizedProfile := normalizeSettings(p.Settings)
+
+    return reflect.DeepEqual(normalizedCurrent, normalizedProfile)
+}
+
+// normalizeSettings 规范化 settings，处理 JSON 反序列化的类型问题
+func normalizeSettings(m map[string]interface{}) map[string]interface{} {
+    result := make(map[string]interface{})
+    for k, v := range m {
+        result[k] = normalizeValue(v)
+    }
+    return result
+}
+
+func normalizeValue(v interface{}) interface{} {
+    switch val := v.(type) {
+    case map[string]interface{}:
+        return normalizeSettings(val)
+    case []interface{}:
+        result := make([]interface{}, len(val))
+        for i, item := range val {
+            result[i] = normalizeValue(item)
+        }
+        return result
+    case float64:
+        // JSON 数字默认解析为 float64，整数场景转换为 int64
+        if val == float64(int64(val)) {
+            return int64(val)
+        }
+        return val
+    default:
+        return val
+    }
 }
 ```
 
@@ -839,6 +933,74 @@ func TestProfileService_IsActive(t *testing.T) {
 
     p, _ := repo.GetByName("active")
     assert.True(t, svc.IsActive(*p))
+}
+```
+
+#### Step 5: ProfileRunner 接口与实现
+
+创建 `internal/service/runner.go`：
+
+```go
+package service
+
+import (
+    "fmt"
+    "os"
+    "os/exec"
+    "strings"
+
+    "claude-switch/internal/domain"
+)
+
+// ProfileRunner 定义运行 profile 的接口
+type ProfileRunner interface {
+    Run(p domain.Profile) error
+}
+
+// ProfileRunnerExec 使用 exec 命令运行 claude
+type ProfileRunnerExec struct {
+    claudePath string
+}
+
+func NewProfileRunnerExec(claudePath string) *ProfileRunnerExec {
+    return &ProfileRunnerExec{claudePath: claudePath}
+}
+
+func (r *ProfileRunnerExec) Run(p domain.Profile) error {
+    cmd := exec.Command(r.claudePath)
+
+    // 设置环境变量（从 profile settings 提取）
+    cmd.Env = os.Environ()
+    if apiKey, ok := p.Settings["api_key"].(string); ok && apiKey != "" {
+        cmd.Env = append(cmd.Env, fmt.Sprintf("ANTHROPIC_API_KEY=%s", apiKey))
+    }
+    if model, ok := p.Settings["model"].(string); ok && model != "" {
+        cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_MODEL=%s", model))
+    }
+
+    // 非阻塞启动，让 claude 在前台运行
+    cmd.Stdin = os.Stdin
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+
+    return cmd.Run()
+}
+```
+
+#### Step 6: Runner 测试
+
+```go
+func TestProfileRunnerExec_SetsEnvironmentFromProfile(t *testing.T) {
+    // 使用 mock exec，避免真正启动进程
+    // 实际项目中可以用 exec.CommandContext + context cancellation
+}
+
+func TestProfileRunnerExec_ReturnsErrorIfClaudeNotFound(t *testing.T) {
+    runner := NewProfileRunnerExec("/nonexistent/claude")
+
+    err := runner.Run(domain.Profile{Name: "test"})
+
+    assert.Error(t, err)
 }
 ```
 
@@ -1004,6 +1166,31 @@ func TestModel_EnterAppliesProfile(t *testing.T) {
 修改 `internal/tui/model.go`：
 
 ```go
+// 内部消息类型
+type profilesReloadedMsg struct{}
+
+type profileAppliedMsg struct {
+    name string
+}
+
+type profileRunMsg struct {
+    name string
+}
+
+type errorMsg struct {
+    err error
+}
+
+// viewState 视图状态
+type viewState int
+
+const (
+    viewList viewState = iota
+    viewCreateMenu
+    viewCreateForm
+    viewEdit
+)
+
 type Model struct {
     // 依赖
     service service.ProfileService
@@ -1011,7 +1198,10 @@ type Model struct {
     // UI 状态
     state            viewState
     cursor           int
+    createMenuCursor int     // 创建菜单光标
     message          string
+    errMsg           error   // 错误状态
+    loading          bool    // 异步操作中
     width            int
     height           int
 
@@ -1191,16 +1381,72 @@ func (m Model) runSelected() (tea.Model, tea.Cmd) {
 
 ```
        /\
-      /  \      E2E (2-3个)
-     /----\     完整用户流程
+      /  \      E2E (2-3个) 完整用户流程
+     /----\
     /      \
-   /--------\   Integration (15-20个)
-  /          \  Service + 真实 Repo
+   /--------\   Integration (15-20个) Service + 真实 Repo
+  /          \
  /------------\
 /              \
-/   Unit Tests   \  (50+个)
+/   Unit Tests   \  (50+个) Domain + Service + TUI
 /__________________\
-Domain + Service + TUI
+```
+
+### E2E 测试场景
+
+```go
+// e2e/smoke_test.go
+
+// TestFullCRUDLifecycle 完整 CRUD 流程
+func TestFullCRUDLifecycle(t *testing.T) {
+    tmpDir := t.TempDir()
+    settingsPath := filepath.Join(tmpDir, "settings.json")
+
+    repo := repository.NewProfileRepositoryFS(tmpDir, settingsPath)
+    svc := service.NewProfileService(repo, nil)
+
+    // 1. 创建
+    err := svc.Create("test-profile", map[string]interface{}{"model": "opus"})
+    require.NoError(t, err)
+
+    // 2. 应用
+    err = svc.Apply("test-profile")
+    require.NoError(t, err)
+
+    // 3. 验证生效
+    current, err := svc.LoadCurrent()
+    require.NoError(t, err)
+    assert.Equal(t, "opus", current["model"])
+
+    // 4. 删除
+    err = svc.Delete("test-profile")
+    require.NoError(t, err)
+
+    _, err = svc.GetByName("test-profile")
+    assert.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
+// TestCorruptedFileTolerance 容错能力
+func TestCorruptedFileTolerance(t *testing.T) {
+    tmpDir := t.TempDir()
+    settingsPath := filepath.Join(tmpDir, "settings.json")
+
+    repo := repository.NewProfileRepositoryFS(tmpDir, settingsPath)
+
+    // 创建有效 profile
+    repo.Save("valid", map[string]interface{}{"model": "opus"})
+
+    // 创建损坏的文件
+    os.WriteFile(filepath.Join(tmpDir, "corrupted.json"), []byte("not json"), 0644)
+
+    // 列表应该返回有效数据，同时报告错误
+    profiles, errs := repo.List()
+
+    assert.Len(t, profiles, 1)
+    assert.Equal(t, "valid", profiles[0].Name)
+    assert.Len(t, errs, 1)
+    assert.Equal(t, "corrupted", errs[0].Name)
+}
 ```
 
 ### 测试运行
@@ -1217,6 +1463,40 @@ go test ./internal/domain/...
 go test ./internal/repository/...
 go test ./internal/service/...
 go test ./internal/tui/...
+```
+
+### CI/CD 集成
+
+```yaml
+# .github/workflows/test.yml
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - run: go test -cover ./...
+      - name: Coverage check
+        run: |
+          COVERAGE=$(go test -cover ./... -coverprofile=coverage.out | grep -oP '\d+\.\d+%' | head -1)
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "Coverage $COVERAGE < 80%"
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - run: go install golang.org/x/tools/cmd/golangci-lint@latest
+      - run: golangci-lint run ./...
 ```
 
 ---
