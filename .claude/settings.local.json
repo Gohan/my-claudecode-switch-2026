@@ -12,7 +12,10 @@
       "mcp__zread__get_repo_structure",
       "mcp__zread__read_file",
       "Bash(go list:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(go tool:*)"
     ]
   }
 }

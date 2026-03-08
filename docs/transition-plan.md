@@ -9,8 +9,9 @@
 3. [Phase 1: Domain 模型](#phase-1-domain-模型)
 4. [Phase 2: Repository 层](#phase-2-repository-层)
 5. [Phase 3: Service 层](#phase-3-service-层)
-6. [Phase 4: TUI 重构](#phase-4-tui-重构)
-7. [Phase 5: BubbleTea v2 迁移](#phase-5-bubbletea-v2-迁移)
+6. [Phase 3.5: 预设 Profile 配置](#phase-35-预设-profile-配置)
+7. [Phase 4: TUI 重构](#phase-4-tui-重构)
+8. [Phase 5: BubbleTea v2 迁移](#phase-5-bubbletea-v2-迁移)
 
 ---
 
@@ -1009,6 +1010,169 @@ func TestProfileRunnerExec_ReturnsErrorIfClaudeNotFound(t *testing.T) {
 - [ ] `go test ./internal/service/...` 通过
 - [ ] 测试覆盖率 > 85%
 - [ ] 所有业务场景有测试覆盖
+
+---
+
+## Phase 3.5: 预设 Profile 配置
+
+### 目标
+
+为 TUI 和 CLI 提供预设的 Profile 配置模板（如 z.ai、Tencent Cloud、Kimi、Ali 等）。
+
+### 背景
+
+TUI 需要支持快速创建预设的云服务配置，这些预设配置包含：
+- API 端点 URL
+- 超时设置
+- 模型映射
+- 认证 Token 占位符
+
+这些函数最初在 `internal/profile/profile.go` 中实现，重构时遗漏了迁移。
+
+### 设计
+
+#### 方案 A: 放在 Service 层（推荐）
+
+在 `internal/service/profile.go` 中添加预设配置函数：
+
+```go
+package service
+
+// DefaultProfileConfig 定义预设配置的模板
+type DefaultProfileConfig struct {
+    Name        string
+    DisplayName string
+    BaseURL     string
+    Timeout     string
+    ModelMapping map[string]string
+    EnvVars     map[string]string
+}
+
+// PredefinedProfiles 返回所有可用的预设配置列表
+func PredefinedProfiles() []DefaultProfileConfig {
+    return []DefaultProfileConfig{
+        {
+            Name:        "zai",
+            DisplayName: "z.ai Coding Plan",
+            BaseURL:     "https://api.z.ai/api/anthropic",
+            Timeout:     "3000000",
+            ModelMapping: map[string]string{
+                "haiku":  "glm-4.5-air",
+                "sonnet": "glm-4.7",
+                "opus":   "glm-5",
+            },
+            EnvVars: map[string]string{
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            },
+        },
+        {
+            Name:        "tencent",
+            DisplayName: "Tencent Cloud CodingPlan",
+            BaseURL:     "https://api.lkeap.cloud.tencent.com/coding/anthropic",
+            Timeout:     "3000000",
+            ModelMapping: map[string]string{
+                "haiku":  "tc-code-latest",
+                "sonnet": "kimi-k2.5",
+                "opus":   "minimax-m2.5",
+            },
+            EnvVars: map[string]string{
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            },
+        },
+        {
+            Name:        "kimi",
+            DisplayName: "Kimi Official API",
+            BaseURL:     "https://api.kimi.com/coding/",
+            Timeout:     "3000000",
+            ModelMapping: map[string]string{},
+            EnvVars: map[string]string{
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            },
+        },
+        {
+            Name:        "ali",
+            DisplayName: "Ali BaiLian CodingPlan",
+            BaseURL:     "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+            Timeout:     "3000000",
+            ModelMapping: map[string]string{
+                "haiku":  "glm-5",
+                "sonnet": "kimi-k2.5",
+                "opus":   "MiniMax-M2.5",
+            },
+            EnvVars: map[string]string{
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            },
+        },
+    }
+}
+
+// GetDefaultProfileSettings 根据预设名称生成 settings map
+func GetDefaultProfileSettings(apiKey string, configName string) (map[string]interface{}, error) {
+    var config *DefaultProfileConfig
+
+    profiles := PredefinedProfiles()
+    for i := range profiles {
+        if profiles[i].Name == configName {
+            config = &profiles[i]
+            break
+        }
+    }
+
+    if config == nil {
+        return nil, fmt.Errorf("unknown profile: %s", configName)
+    }
+
+    // 构建 env 配置
+    env := make(map[string]interface{})
+    for k, v := range config.EnvVars {
+        env[k] = v
+    }
+    env["ANTHROPIC_AUTH_TOKEN"] = apiKey
+    env["ANTHROPIC_BASE_URL"] = config.BaseURL
+    env["API_TIMEOUT_MS"] = config.Timeout
+
+    // 添加模型映射
+    for modelTier, modelName := range config.ModelMapping {
+        switch modelTier {
+        case "haiku":
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = modelName
+        case "sonnet":
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = modelName
+        case "opus":
+            env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = modelName
+        }
+    }
+
+    return map[string]interface{}{
+        "model": "opus",
+        "env":   env,
+    }, nil
+}
+```
+
+#### 方案 B: 放在 Domain 层
+
+在 `internal/domain/profile.go` 中添加纯数据函数（无业务逻辑）。
+
+**对比**：
+
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| 方案 A (Service) | 可注入 API key，有业务逻辑封装 | 轻微耦合 |
+| 方案 B (Domain) | 纯数据，无依赖 | TUI 需要自己组装 settings |
+
+### 实现步骤
+
+1. 在 `internal/service/profile.go` 中添加 `PredefinedProfiles()` 函数
+2. 添加 `GetDefaultProfileSettings(apiKey, configName)` 函数
+3. 添加测试覆盖
+4. TUI 重构时从 `profile.Default*Profile()` 迁移到 `service.GetDefaultProfileSettings()`
+
+### 验证清单
+
+- [ ] `go test ./internal/service/...` 通过
+- [ ] 所有预设配置可正确生成 settings
+- [ ] TUI 迁移后功能不变
 
 ---
 

@@ -1,0 +1,270 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>domain: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">claude-switch/internal/domain/profile.go (98.5%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package domain
+
+import (
+        "fmt"
+        "regexp"
+        "sort"
+        "strings"
+)
+
+// Profile represents a Claude Code configuration
+type Profile struct {
+        Name     string
+        Settings map[string]interface{}
+}
+
+// IsEmpty checks if the Profile is empty (name is blank)
+func (p Profile) IsEmpty() bool <span class="cov8" title="1">{
+        return strings.TrimSpace(p.Name) == ""
+}</span>
+
+// DiffStatus represents diff status
+type DiffStatus int
+
+const (
+        DiffUnchanged DiffStatus = iota
+        DiffModified
+        DiffAdded
+        DiffRemoved
+)
+
+// DiffEntry represents a single configuration change
+type DiffEntry struct {
+        Key      string
+        OldValue string
+        NewValue string
+        Status   DiffStatus
+}
+
+// invalidNameChars defines characters not allowed in profile names
+var invalidNameChars = regexp.MustCompile(`[\\/:*?"&lt;&gt;|]`)
+
+// ValidateProfileName validates a profile name
+func ValidateProfileName(name string) error <span class="cov8" title="1">{
+        if strings.TrimSpace(name) == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("name cannot be empty")
+        }</span>
+        <span class="cov8" title="1">if match := invalidNameChars.FindString(name); match != "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("invalid character: %s", match)
+        }</span>
+        <span class="cov8" title="1">return nil</span>
+}
+
+// Flatten converts a nested map to a flat map with dot-separated keys
+func Flatten(m map[string]interface{}, prefix string) map[string]string <span class="cov8" title="1">{
+        result := make(map[string]string)
+        for k, v := range m </span><span class="cov8" title="1">{
+                key := k
+                if prefix != "" </span><span class="cov8" title="1">{
+                        key = prefix + "." + k
+                }</span>
+                <span class="cov8" title="1">switch val := v.(type) </span>{
+                case map[string]interface{}:<span class="cov8" title="1">
+                        for fk, fv := range Flatten(val, key) </span><span class="cov8" title="1">{
+                                result[fk] = fv
+                        }</span>
+                default:<span class="cov8" title="1">
+                        result[key] = fmt.Sprintf("%v", val)</span>
+                }
+        }
+        <span class="cov8" title="1">return result</span>
+}
+
+// Diff compares two settings maps and returns the differences
+func Diff(current, target map[string]interface{}) []DiffEntry <span class="cov8" title="1">{
+        flatCurrent := Flatten(current, "")
+        flatTarget := Flatten(target, "")
+
+        allKeys := make(map[string]bool)
+        for k := range flatCurrent </span><span class="cov8" title="1">{
+                allKeys[k] = true
+        }</span>
+        <span class="cov8" title="1">for k := range flatTarget </span><span class="cov8" title="1">{
+                allKeys[k] = true
+        }</span>
+
+        <span class="cov8" title="1">var keys []string
+        for k := range allKeys </span><span class="cov8" title="1">{
+                keys = append(keys, k)
+        }</span>
+        <span class="cov8" title="1">sort.Strings(keys)
+
+        var entries []DiffEntry
+        for _, k := range keys </span><span class="cov8" title="1">{
+                cv, inCurrent := flatCurrent[k]
+                tv, inTarget := flatTarget[k]
+
+                switch </span>{
+                case inCurrent &amp;&amp; inTarget &amp;&amp; cv == tv:<span class="cov8" title="1">
+                        entries = append(entries, DiffEntry{Key: k, OldValue: cv, NewValue: tv, Status: DiffUnchanged})</span>
+                case inCurrent &amp;&amp; inTarget:<span class="cov8" title="1">
+                        entries = append(entries, DiffEntry{Key: k, OldValue: cv, NewValue: tv, Status: DiffModified})</span>
+                case inCurrent:<span class="cov8" title="1">
+                        entries = append(entries, DiffEntry{Key: k, OldValue: cv, Status: DiffRemoved})</span>
+                case inTarget:<span class="cov8" title="1">
+                        entries = append(entries, DiffEntry{Key: k, NewValue: tv, Status: DiffAdded})</span>
+                }
+        }
+        <span class="cov8" title="1">return entries</span>
+}
+
+// IsActive checks if a profile's settings match the current settings
+func IsActive(current map[string]interface{}, p Profile) bool <span class="cov8" title="1">{
+        fc := Flatten(current, "")
+        fp := Flatten(p.Settings, "")
+        if len(fc) != len(fp) </span><span class="cov0" title="0">{
+                return false
+        }</span>
+        <span class="cov8" title="1">for k, v := range fc </span><span class="cov8" title="1">{
+                if fp[k] != v </span><span class="cov8" title="1">{
+                        return false
+                }</span>
+        }
+        <span class="cov8" title="1">return true</span>
+}
+
+// MaskSensitive masks sensitive values for display
+func MaskSensitive(key, value string) string <span class="cov8" title="1">{
+        lower := strings.ToLower(key)
+        for _, s := range []string{"token", "key", "secret", "password", "credential"} </span><span class="cov8" title="1">{
+                if strings.Contains(lower, s) </span><span class="cov8" title="1">{
+                        if len(value) &lt;= 8 </span><span class="cov8" title="1">{
+                                return "****"
+                        }</span>
+                        <span class="cov8" title="1">return value[:4] + "****" + value[len(value)-4:]</span>
+                }
+        }
+        <span class="cov8" title="1">return value</span>
+}
+
+// GetSummary extracts model and baseURL from settings
+func GetSummary(settings map[string]interface{}) (model, baseURL string) <span class="cov8" title="1">{
+        if m, ok := settings["model"]; ok </span><span class="cov8" title="1">{
+                model = fmt.Sprintf("%v", m)
+        }</span>
+        <span class="cov8" title="1">if env, ok := settings["env"].(map[string]interface{}); ok </span><span class="cov8" title="1">{
+                if url, ok := env["ANTHROPIC_BASE_URL"]; ok </span><span class="cov8" title="1">{
+                        baseURL = fmt.Sprintf("%v", url)
+                }</span>
+        }
+        <span class="cov8" title="1">return</span>
+}
+
+// GetModelMapping returns model mapping information from settings
+func GetModelMapping(settings map[string]interface{}) map[string]string <span class="cov8" title="1">{
+        mapping := make(map[string]string)
+        if env, ok := settings["env"].(map[string]interface{}); ok </span><span class="cov8" title="1">{
+                if v, ok := env["ANTHROPIC_DEFAULT_HAIKU_MODEL"]; ok </span><span class="cov8" title="1">{
+                        mapping["haiku"] = fmt.Sprintf("%v", v)
+                }</span>
+                <span class="cov8" title="1">if v, ok := env["ANTHROPIC_DEFAULT_SONNET_MODEL"]; ok </span><span class="cov8" title="1">{
+                        mapping["sonnet"] = fmt.Sprintf("%v", v)
+                }</span>
+                <span class="cov8" title="1">if v, ok := env["ANTHROPIC_DEFAULT_OPUS_MODEL"]; ok </span><span class="cov8" title="1">{
+                        mapping["opus"] = fmt.Sprintf("%v", v)
+                }</span>
+        }
+        <span class="cov8" title="1">return mapping</span>
+}</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
