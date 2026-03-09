@@ -8,6 +8,116 @@ import (
 	"claude-switch/internal/repository"
 )
 
+// DefaultProfileConfig 定义预设配置的模板
+type DefaultProfileConfig struct {
+	Name        string
+	DisplayName string
+	BaseURL     string
+	Timeout     string
+	ModelMapping map[string]string
+	EnvVars     map[string]string
+}
+
+// PredefinedProfiles 返回所有可用的预设配置列表
+func PredefinedProfiles() []DefaultProfileConfig {
+	return []DefaultProfileConfig{
+		{
+			Name:        "zai",
+			DisplayName: "z.ai Coding Plan",
+			BaseURL:     "https://api.z.ai/api/anthropic",
+			Timeout:     "3000000",
+			ModelMapping: map[string]string{
+				"haiku":  "glm-4.5-air",
+				"sonnet": "glm-4.7",
+				"opus":   "glm-5",
+			},
+			EnvVars: map[string]string{
+				"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			},
+		},
+		{
+			Name:        "tencent",
+			DisplayName: "Tencent Cloud CodingPlan",
+			BaseURL:     "https://api.lkeap.cloud.tencent.com/coding/anthropic",
+			Timeout:     "3000000",
+			ModelMapping: map[string]string{
+				"haiku":  "tc-code-latest",
+				"sonnet": "kimi-k2.5",
+				"opus":   "minimax-m2.5",
+			},
+			EnvVars: map[string]string{
+				"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			},
+		},
+		{
+			Name:        "kimi",
+			DisplayName: "Kimi Official API",
+			BaseURL:     "https://api.kimi.com/coding/",
+			Timeout:     "3000000",
+			ModelMapping: map[string]string{},
+			EnvVars: map[string]string{
+				"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			},
+		},
+		{
+			Name:        "ali",
+			DisplayName: "Ali BaiLian CodingPlan",
+			BaseURL:     "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+			Timeout:     "3000000",
+			ModelMapping: map[string]string{
+				"haiku":  "glm-5",
+				"sonnet": "kimi-k2.5",
+				"opus":   "MiniMax-M2.5",
+			},
+			EnvVars: map[string]string{
+				"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			},
+		},
+	}
+}
+
+// GetDefaultProfileSettings 根据预设名称生成 settings map
+func GetDefaultProfileSettings(configName string) map[string]interface{} {
+	var config *DefaultProfileConfig
+
+	profiles := PredefinedProfiles()
+	for i := range profiles {
+		if profiles[i].Name == configName {
+			config = &profiles[i]
+			break
+		}
+	}
+
+	if config == nil {
+		return nil
+	}
+
+	// 构建 env 配置
+	env := make(map[string]interface{})
+	for k, v := range config.EnvVars {
+		env[k] = v
+	}
+	env["ANTHROPIC_BASE_URL"] = config.BaseURL
+	env["API_TIMEOUT_MS"] = config.Timeout
+
+	// 添加模型映射
+	for modelTier, modelName := range config.ModelMapping {
+		switch modelTier {
+		case "haiku":
+			env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = modelName
+		case "sonnet":
+			env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = modelName
+		case "opus":
+			env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = modelName
+		}
+	}
+
+	return map[string]interface{}{
+		"model": "opus",
+		"env":   env,
+	}
+}
+
 // ProfileService defines the business logic interface for profile management
 type ProfileService interface {
 	List() ([]domain.Profile, error)
@@ -157,4 +267,24 @@ func normalizeValue(v interface{}) interface{} {
 	default:
 		return v
 	}
+}
+
+// DefaultZAIProfile returns a profile template with z.ai configuration
+func DefaultZAIProfile() map[string]interface{} {
+	return GetDefaultProfileSettings("zai")
+}
+
+// DefaultTencentCloudProfile returns a profile template with Tencent Cloud configuration
+func DefaultTencentCloudProfile() map[string]interface{} {
+	return GetDefaultProfileSettings("tencent")
+}
+
+// DefaultKimiProfile returns a profile template with Kimi configuration
+func DefaultKimiProfile() map[string]interface{} {
+	return GetDefaultProfileSettings("kimi")
+}
+
+// DefaultAliProfile returns a profile template with Ali BaiLian configuration
+func DefaultAliProfile() map[string]interface{} {
+	return GetDefaultProfileSettings("ali")
 }

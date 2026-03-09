@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"claude-switch/internal/domain"
-	"claude-switch/internal/profile"
 	"claude-switch/internal/runner"
 	"claude-switch/internal/service"
 )
@@ -548,7 +547,7 @@ func (m Model) updateSaveZAI(msg tea.Msg) (tea.Model, tea.Cmd) {
 		name:           "z.ai",
 		step:           &m.apiStep,
 		defaultName:    "z.ai Coding Plan",
-		profileGetter:  profile.DefaultZAIProfile,
+		profileGetter:  service.DefaultZAIProfile,
 		successMessage: "✓ Saved z.ai profile",
 	}
 	return m.updateSaveAPI(msg, cfg)
@@ -559,7 +558,7 @@ func (m Model) updateSaveTencentCloud(msg tea.Msg) (tea.Model, tea.Cmd) {
 		name:           "TencentCloud",
 		step:           &m.apiStep,
 		defaultName:    "Tencent Coding Plan",
-		profileGetter:  profile.DefaultTencentCloudProfile,
+		profileGetter:  service.DefaultTencentCloudProfile,
 		successMessage: "✓ Saved TencentCloud profile",
 	}
 	return m.updateSaveAPI(msg, cfg)
@@ -570,7 +569,7 @@ func (m Model) updateSaveKimi(msg tea.Msg) (tea.Model, tea.Cmd) {
 		name:           "Kimi",
 		step:           &m.apiStep,
 		defaultName:    "Kimi Coding",
-		profileGetter:  profile.DefaultKimiProfile,
+		profileGetter:  service.DefaultKimiProfile,
 		successMessage: "✓ Saved Kimi profile",
 	}
 	return m.updateSaveAPI(msg, cfg)
@@ -581,7 +580,7 @@ func (m Model) updateSaveAli(msg tea.Msg) (tea.Model, tea.Cmd) {
 		name:           "Ali",
 		step:           &m.apiStep,
 		defaultName:    "Ali Coding Plan",
-		profileGetter:  profile.DefaultAliProfile,
+		profileGetter:  service.DefaultAliProfile,
 		successMessage: "✓ Saved Ali BaiLian profile",
 	}
 	return m.updateSaveAPI(msg, cfg)

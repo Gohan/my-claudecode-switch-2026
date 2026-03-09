@@ -16,7 +16,10 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(go tool:*)",
-      "Bash(go doc:*)"
+      "Bash(go doc:*)",
+      "mcp__web-search-prime__web_search_prime",
+      "Bash(taskkill:*)",
+      "Bash(bash:*)"
     ]
   }
 }

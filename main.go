@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"claude-switch/internal/profile"
 	"claude-switch/internal/repository"
 	"claude-switch/internal/runner"
 	"claude-switch/internal/service"
@@ -53,22 +52,22 @@ func main() {
 }
 
 func runProfile(name string) error {
-	p, err := profile.GetByName(name)
-	if err != nil {
-		return fmt.Errorf("profile '%s' not found", name)
-	}
+	home, _ := os.UserHomeDir()
+	profilesDir := filepath.Join(home, ".claude-switch", "profiles")
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
 
-	// 准备运行目录
-	runDir, err := runner.PrepareRunDir(p.Name, p.Settings)
-	if err != nil {
-		return fmt.Errorf("failed to prepare run directory: %w", err)
-	}
+	repo := repository.NewProfileRepositoryFS(profilesDir, settingsPath)
+	runnerExec := service.NewProfileRunnerExec("claude")
+	svc := service.NewProfileService(repo, runnerExec)
 
-	// 启动 claude
-	return runner.Run(runDir)
+	// 使用 service 运行 profile
+	return svc.Run(name)
 }
 
 func printHelp() {
+	home, _ := os.UserHomeDir()
+	profilesDir := filepath.Join(home, ".claude-switch", "profiles")
+
 	fmt.Println("Claude Switch - Manage and switch between Claude Code profiles")
 	fmt.Println()
 	fmt.Println("Usage:")
@@ -80,7 +79,7 @@ func printHelp() {
 	fmt.Println("  claude-switch run zai      Run claude with 'zai' profile")
 	fmt.Println()
 	fmt.Println("Profiles are stored in:")
-	fmt.Printf("  %s\n", profile.ProfilesDir())
+	fmt.Printf("  %s\n", profilesDir)
 	fmt.Println()
 	fmt.Println("Run directories are created in:")
 	fmt.Printf("  %s\n", runner.RunDir())
