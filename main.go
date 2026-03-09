@@ -3,11 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"claude-switch/internal/profile"
+	"claude-switch/internal/repository"
 	"claude-switch/internal/runner"
+	"claude-switch/internal/service"
 	"claude-switch/internal/tui"
 )
 
@@ -33,7 +36,16 @@ func main() {
 	}
 
 	// 默认启动 TUI
-	p := tea.NewProgram(tui.NewModel(), tea.WithAltScreen())
+	// 初始化 Service 层
+	home, _ := os.UserHomeDir()
+	profilesDir := filepath.Join(home, ".claude-switch", "profiles")
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+	repo := repository.NewProfileRepositoryFS(profilesDir, settingsPath)
+	runnerExec := service.NewProfileRunnerExec("claude")
+	svc := service.NewProfileService(repo, runnerExec)
+
+	p := tea.NewProgram(tui.NewModel(svc), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

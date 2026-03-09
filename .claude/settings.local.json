@@ -15,7 +15,8 @@
       "WebFetch(domain:github.com)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(go tool:*)"
+      "Bash(go tool:*)",
+      "Bash(go doc:*)"
     ]
   }
 }

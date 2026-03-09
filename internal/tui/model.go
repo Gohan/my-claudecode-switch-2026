@@ -8,8 +8,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"claude-switch/internal/domain"
 	"claude-switch/internal/profile"
 	"claude-switch/internal/runner"
+	"claude-switch/internal/service"
 )
 
 type viewState int
@@ -46,8 +48,12 @@ var createMenuItems = []createMenuItem{
 }
 
 type Model struct {
+	// 依赖
+	service service.ProfileService
+
+	// UI 状态
 	state            viewState
-	profiles         []profile.Profile
+	profiles         []domain.Profile
 	current          map[string]interface{}
 	cursor           int
 	createMenuCursor int // 创建菜单光标
@@ -55,7 +61,7 @@ type Model struct {
 	apiKeyInput      textinput.Model
 	apiStep          int // 0: 输入 name, 1: 输入 api key (通用)
 	pendingSaveName  string           // 待保存的名字（用于覆盖/另存为）
-	existingProfile  *profile.Profile // 已存在的 profile（用于显示 diff）
+	existingProfile  *domain.Profile // 已存在的 profile（用于显示 diff）
 	saveOriginalName string           // 保存界面预填的原始名字（用于 hint 样式）
 	message          string
 	width            int
@@ -67,7 +73,8 @@ func (m Model) safeProfileIndex() bool {
 	return m.cursor >= 0 && m.cursor < len(m.profiles)
 }
 
-func NewModel() Model {
+// NewModel creates a new Model with the given service
+func NewModel(svc service.ProfileService) Model {
 	ti := textinput.New()
 	ti.Placeholder = "profile-name"
 	ti.CharLimit = 64
@@ -79,33 +86,38 @@ func NewModel() Model {
 	aki.EchoCharacter = '*'
 
 	m := Model{
-		state:       viewList,
-		input:       ti,
+		service:   svc,
+		state:     viewList,
+		input:     ti,
 		apiKeyInput: aki,
-		apiStep:     0,
+		apiStep:   0,
 	}
 	m.loadData()
 	return m
 }
 
 func (m *Model) loadData() {
-	current, err := profile.LoadCurrent()
+	current, err := m.service.LoadCurrent()
 	if err != nil {
 		m.current = make(map[string]interface{})
 	} else {
 		m.current = current
 	}
 
-	profiles, loadErrors := profile.List()
+	profiles, err := m.service.List()
 	m.profiles = profiles
 
 	// 如果有加载错误，显示警告信息
-	if len(loadErrors) > 0 {
-		var errMsgs []string
-		for _, e := range loadErrors {
-			errMsgs = append(errMsgs, fmt.Sprintf("%s: %v", e.Name, e.Err))
+	if err != nil {
+		if listErr, ok := err.(*service.ListWarningError); ok {
+			var errMsgs []string
+			for _, e := range listErr.Errors {
+				errMsgs = append(errMsgs, fmt.Sprintf("%s: %v", e.Name, e.Err))
+			}
+			m.message = fmt.Sprintf("Warning: failed to load %d profile(s): %s", len(listErr.Errors), strings.Join(errMsgs, "; "))
+		} else {
+			m.message = fmt.Sprintf("Error: %v", err)
 		}
-		m.message = fmt.Sprintf("Warning: failed to load %d profile(s): %s", len(loadErrors), strings.Join(errMsgs, "; "))
 	} else {
 		m.message = ""
 	}
@@ -326,18 +338,17 @@ func (m Model) updateSave(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// 检查是否存在同名 profile
-			for i, p := range m.profiles {
-				if p.Name == name {
-					m.pendingSaveName = name
-					m.existingProfile = &m.profiles[i]
-					m.state = viewSaveOverwrite
-					m.saveOriginalName = ""
-					m.input.Placeholder = "profile-name"
-					return m, nil
-				}
+			existing, err := m.service.GetByName(name)
+			if err == nil {
+				m.pendingSaveName = name
+				m.existingProfile = existing
+				m.state = viewSaveOverwrite
+				m.saveOriginalName = ""
+				m.input.Placeholder = "profile-name"
+				return m, nil
 			}
 			// 不存在，直接保存
-			if err := profile.Save(name, m.current); err != nil {
+			if err := m.service.Create(name, m.current); err != nil {
 				m.message = fmt.Sprintf("Error: %v", err)
 			} else {
 				m.message = fmt.Sprintf("✓ Saved profile: %s", name)
@@ -364,7 +375,7 @@ func (m Model) updateSaveOverwrite(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch keyMsg.String() {
 	case "y", "Y":
 		// 确认覆盖
-		if err := profile.Save(m.pendingSaveName, m.current); err != nil {
+		if err := m.service.Update(m.pendingSaveName, m.current); err != nil {
 			m.message = fmt.Sprintf("Error: %v", err)
 		} else {
 			m.message = fmt.Sprintf("✓ Overwritten profile: %s", m.pendingSaveName)
@@ -407,13 +418,11 @@ func (m Model) updateSaveNewName(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// 再次检查是否存在同名
-			for _, p := range m.profiles {
-				if p.Name == name {
-					m.message = fmt.Sprintf("Profile '%s' already exists", name)
-					return m, nil
-				}
+			if _, err := m.service.GetByName(name); err == nil {
+				m.message = fmt.Sprintf("Profile '%s' already exists", name)
+				return m, nil
 			}
-			if err := profile.Save(name, m.current); err != nil {
+			if err := m.service.Create(name, m.current); err != nil {
 				m.message = fmt.Sprintf("Error: %v", err)
 			} else {
 				m.message = fmt.Sprintf("✓ Saved profile: %s", name)
@@ -469,7 +478,7 @@ func (m *Model) updateSaveAPI(msg tea.Msg, cfg apiProfileConfig) (tea.Model, tea
 				m.message = ""
 
 				// 检查 profile 是否已存在，如果是则预填 API key
-				if existing, err := profile.GetByName(name); err == nil {
+				if existing, err := m.service.GetByName(name); err == nil {
 					if env, ok := existing.Settings["env"].(map[string]interface{}); ok {
 						if token, ok := env["ANTHROPIC_AUTH_TOKEN"].(string); ok && token != "" {
 							m.apiKeyInput.SetValue(token)
@@ -495,11 +504,24 @@ func (m *Model) updateSaveAPI(msg tea.Msg, cfg apiProfileConfig) (tea.Model, tea
 				if env, ok := apiProfile["env"].(map[string]interface{}); ok {
 					env["ANTHROPIC_AUTH_TOKEN"] = apiKey
 				}
-				if err := profile.Save(name, apiProfile); err != nil {
-					m.message = fmt.Sprintf("Error: %v", err)
+
+				// 检查是否已存在，存在则更新，不存在则创建
+				if _, err := m.service.GetByName(name); err == nil {
+					// 已存在，更新
+					if err := m.service.Update(name, apiProfile); err != nil {
+						m.message = fmt.Sprintf("Error: %v", err)
+					} else {
+						m.message = cfg.successMessage + ": " + name
+						m.loadData()
+					}
 				} else {
-					m.message = cfg.successMessage + ": " + name
-					m.loadData()
+					// 不存在，创建
+					if err := m.service.Create(name, apiProfile); err != nil {
+						m.message = fmt.Sprintf("Error: %v", err)
+					} else {
+						m.message = cfg.successMessage + ": " + name
+						m.loadData()
+					}
 				}
 				m.state = viewList
 				*cfg.step = 0
@@ -577,7 +599,7 @@ func (m Model) updateConfirmApply(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		p := m.profiles[m.cursor]
-		if err := profile.ApplyProfile(p); err != nil {
+		if err := m.service.Apply(p.Name); err != nil {
 			m.message = fmt.Sprintf("Error: %v", err)
 		} else {
 			m.message = fmt.Sprintf("✓ Applied profile: %s", p.Name)
@@ -602,7 +624,7 @@ func (m Model) updateConfirmDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		p := m.profiles[m.cursor]
-		if err := profile.Delete(p.Name); err != nil {
+		if err := m.service.Delete(p.Name); err != nil {
 			m.message = fmt.Sprintf("Error: %v", err)
 		} else {
 			m.message = fmt.Sprintf("✓ Deleted profile: %s", p.Name)
@@ -692,7 +714,7 @@ func (m Model) viewList() string {
 	b.WriteString(titleStyle.Render("🔧 Claude Code Settings Switch"))
 	b.WriteString("\n\n")
 
-	model, baseURL := profile.GetSummary(m.current)
+	model, baseURL := domain.GetSummary(m.current)
 	b.WriteString(dimStyle.Render("Current: "))
 	if model != "" {
 		b.WriteString(fmt.Sprintf("model=%s", model))
@@ -715,7 +737,7 @@ func (m Model) viewList() string {
 				cursor = "> "
 			}
 
-			isActive := profile.IsActive(m.current, p)
+			isActive := m.service.IsActive(p)
 
 			icon := "○"
 			nameStr := p.Name
@@ -729,7 +751,7 @@ func (m Model) viewList() string {
 
 			b.WriteString(fmt.Sprintf("%s%s %s\n", cursor, icon, nameStr))
 
-			pModel, pURL := profile.GetSummary(p.Settings)
+			pModel, pURL := domain.GetSummary(p.Settings)
 			var parts []string
 			if pModel != "" {
 				parts = append(parts, fmt.Sprintf("model: %s", pModel))
@@ -738,7 +760,7 @@ func (m Model) viewList() string {
 				parts = append(parts, fmt.Sprintf("url: %s", pURL))
 			}
 			// 显示模型映射
-			modelMap := profile.GetModelMapping(p.Settings)
+			modelMap := domain.GetModelMapping(p.Settings)
 			if len(modelMap) > 0 {
 				var mappings []string
 				if haiku, ok := modelMap["haiku"]; ok {
@@ -811,25 +833,25 @@ func (m Model) viewPreview() string {
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Preview: %s", p.Name)))
 	b.WriteString("\n\n")
 
-	diff := profile.Diff(m.current, p.Settings)
+	diff := domain.Diff(m.current, p.Settings)
 
 	var lines []string
 	for _, d := range diff {
 		switch d.Status {
-		case profile.DiffUnchanged:
-			val := profile.MaskSensitive(d.Key, d.OldValue)
+		case domain.DiffUnchanged:
+			val := domain.MaskSensitive(d.Key, d.OldValue)
 			lines = append(lines, unchangedStyle.Render(fmt.Sprintf("  %s: %s", d.Key, val)))
-		case profile.DiffModified:
-			oldVal := profile.MaskSensitive(d.Key, d.OldValue)
-			newVal := profile.MaskSensitive(d.Key, d.NewValue)
+		case domain.DiffModified:
+			oldVal := domain.MaskSensitive(d.Key, d.OldValue)
+			newVal := domain.MaskSensitive(d.Key, d.NewValue)
 			lines = append(lines, fmt.Sprintf("  %s:", d.Key))
 			lines = append(lines, removedStyle.Render(fmt.Sprintf("    - %s", oldVal)))
 			lines = append(lines, addedStyle.Render(fmt.Sprintf("    + %s", newVal)))
-		case profile.DiffAdded:
-			newVal := profile.MaskSensitive(d.Key, d.NewValue)
+		case domain.DiffAdded:
+			newVal := domain.MaskSensitive(d.Key, d.NewValue)
 			lines = append(lines, addedStyle.Render(fmt.Sprintf("  + %s: %s", d.Key, newVal)))
-		case profile.DiffRemoved:
-			oldVal := profile.MaskSensitive(d.Key, d.OldValue)
+		case domain.DiffRemoved:
+			oldVal := domain.MaskSensitive(d.Key, d.OldValue)
 			lines = append(lines, removedStyle.Render(fmt.Sprintf("  - %s: %s", d.Key, oldVal)))
 		}
 	}
@@ -1094,25 +1116,25 @@ func (m Model) viewSaveOverwrite() string {
 
 	// 显示 diff：从已有 profile 到当前 settings
 	if m.existingProfile != nil {
-		diff := profile.Diff(m.existingProfile.Settings, m.current)
+		diff := domain.Diff(m.existingProfile.Settings, m.current)
 
 		var lines []string
 		for _, d := range diff {
 			switch d.Status {
-			case profile.DiffUnchanged:
-				val := profile.MaskSensitive(d.Key, d.OldValue)
+			case domain.DiffUnchanged:
+				val := domain.MaskSensitive(d.Key, d.OldValue)
 				lines = append(lines, unchangedStyle.Render(fmt.Sprintf("  %s: %s", d.Key, val)))
-			case profile.DiffModified:
-				oldVal := profile.MaskSensitive(d.Key, d.OldValue)
-				newVal := profile.MaskSensitive(d.Key, d.NewValue)
+			case domain.DiffModified:
+				oldVal := domain.MaskSensitive(d.Key, d.OldValue)
+				newVal := domain.MaskSensitive(d.Key, d.NewValue)
 				lines = append(lines, fmt.Sprintf("  %s:", d.Key))
 				lines = append(lines, removedStyle.Render(fmt.Sprintf("    - %s", oldVal)))
 				lines = append(lines, addedStyle.Render(fmt.Sprintf("    + %s", newVal)))
-			case profile.DiffAdded:
-				newVal := profile.MaskSensitive(d.Key, d.NewValue)
+			case domain.DiffAdded:
+				newVal := domain.MaskSensitive(d.Key, d.NewValue)
 				lines = append(lines, addedStyle.Render(fmt.Sprintf("  + %s: %s", d.Key, newVal)))
-			case profile.DiffRemoved:
-				oldVal := profile.MaskSensitive(d.Key, d.OldValue)
+			case domain.DiffRemoved:
+				oldVal := domain.MaskSensitive(d.Key, d.OldValue)
 				lines = append(lines, removedStyle.Render(fmt.Sprintf("  - %s: %s", d.Key, oldVal)))
 			}
 		}
