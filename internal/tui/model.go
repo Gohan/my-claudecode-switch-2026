@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"claude-switch/internal/domain"
 	"claude-switch/internal/runner"
@@ -675,6 +676,34 @@ func (m Model) updateConfirmRun(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// isModalState 判断当前状态是否是弹窗覆盖模式
+func (m Model) isModalState() bool {
+	switch m.state {
+	case viewConfirmApply, viewConfirmDelete, viewConfirmRun, viewSaveOverwrite:
+		return true
+	}
+	return false
+}
+
+// renderModal 将内容渲染为居中弹窗，覆盖在背景上
+func (m Model) renderModal(background string, content string) string {
+	// 如果终端太小，直接显示内容
+	if m.width < 60 || m.height < 15 {
+		return content
+	}
+
+	// 渲染弹窗内容带边框
+	modal := modalBorderStyle.Render(content)
+
+	// 将弹窗居中放置在背景上
+	return lipgloss.Place(m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		modal,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceBackground(lipgloss.Color("#0F0F1A")),
+	)
+}
+
 func (m Model) View() string {
 	switch m.state {
 	case viewList:
@@ -686,7 +715,8 @@ func (m Model) View() string {
 	case viewSave:
 		return m.viewSave()
 	case viewSaveOverwrite:
-		return m.viewSaveOverwrite()
+		// 弹窗模式：列表背景 + 弹窗前景
+		return m.renderModal(m.viewList(), m.viewSaveOverwriteModal())
 	case viewSaveNewName:
 		return m.viewSaveNewName()
 	case viewSaveZAI:
@@ -698,11 +728,14 @@ func (m Model) View() string {
 	case viewSaveAli:
 		return m.viewSaveAli()
 	case viewConfirmApply:
-		return m.viewConfirmApply()
+		// 弹窗模式：列表背景 + 弹窗前景
+		return m.renderModal(m.viewList(), m.viewConfirmApplyModal())
 	case viewConfirmDelete:
-		return m.viewConfirmDelete()
+		// 弹窗模式：列表背景 + 弹窗前景
+		return m.renderModal(m.viewList(), m.viewConfirmDeleteModal())
 	case viewConfirmRun:
-		return m.viewConfirmRun()
+		// 弹窗模式：列表背景 + 弹窗前景
+		return m.renderModal(m.viewList(), m.viewConfirmRunModal())
 	}
 	return ""
 }
@@ -1064,54 +1097,60 @@ func (m Model) viewSaveAli() string {
 	return b.String()
 }
 
-func (m Model) viewConfirmApply() string {
+// viewConfirmApplyModal 弹窗版本：简洁的确认弹窗
+func (m Model) viewConfirmApplyModal() string {
 	var b strings.Builder
 
 	p := m.profiles[m.cursor]
-	b.WriteString(titleStyle.Render("Confirm Apply"))
+	b.WriteString(modalTitleStyle.Render("Confirm Apply"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Apply profile '%s' to settings.json?\n\n", selectedStyle.Render(p.Name)))
-	b.WriteString(helpStyle.Render("[y] yes  [n/esc] no"))
-
-	return b.String()
-}
-
-func (m Model) viewConfirmDelete() string {
-	var b strings.Builder
-
-	p := m.profiles[m.cursor]
-	b.WriteString(titleStyle.Render("Confirm Delete"))
-	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Delete profile '%s'?\n\n", removedStyle.Render(p.Name)))
-	b.WriteString(helpStyle.Render("[y] yes  [n/esc] no"))
-
-	return b.String()
-}
-
-func (m Model) viewConfirmRun() string {
-	var b strings.Builder
-
-	p := m.profiles[m.cursor]
-	runDir := runner.RunDir()
-	b.WriteString(titleStyle.Render("Confirm Run Profile"))
-	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Run claude with profile '%s'?\n\n", selectedStyle.Render(p.Name)))
-	b.WriteString(dimStyle.Render(fmt.Sprintf("Config dir: %s\n", filepath.Join(runDir, p.Name))))
+	b.WriteString(fmt.Sprintf("Apply profile '%s' to settings.json?\n", selectedStyle.Render(p.Name)))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("[y] yes  [n/esc] no"))
 
 	return b.String()
 }
 
-// viewSaveOverwrite 显示覆盖确认界面（带 diff 预览）
-func (m Model) viewSaveOverwrite() string {
+// viewConfirmDeleteModal 弹窗版本：简洁的确认弹窗
+func (m Model) viewConfirmDeleteModal() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("Overwrite Profile"))
+	p := m.profiles[m.cursor]
+	b.WriteString(modalTitleStyle.Render("Confirm Delete"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Profile '%s' already exists.\n\n", selectedStyle.Render(m.pendingSaveName)))
-	b.WriteString(dimStyle.Render("Changes (saved profile → current settings):"))
+	b.WriteString(fmt.Sprintf("Delete profile '%s'?\n", removedStyle.Render(p.Name)))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("[y] yes  [n/esc] no"))
+
+	return b.String()
+}
+
+// viewConfirmRunModal 弹窗版本：简洁的确认弹窗
+func (m Model) viewConfirmRunModal() string {
+	var b strings.Builder
+
+	p := m.profiles[m.cursor]
+	runDir := runner.RunDir()
+	b.WriteString(modalTitleStyle.Render("Confirm Run Profile"))
 	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("Run claude with profile '%s'?\n", selectedStyle.Render(p.Name)))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render(fmt.Sprintf("Config: %s", filepath.Join(runDir, p.Name))))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("[y] yes  [n/esc] no"))
+
+	return b.String()
+}
+
+// viewSaveOverwriteModal 弹窗版本：覆盖确认（带 diff 预览）
+func (m Model) viewSaveOverwriteModal() string {
+	var b strings.Builder
+
+	b.WriteString(modalTitleStyle.Render("Overwrite Profile"))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("Profile '%s' already exists.\n", selectedStyle.Render(m.pendingSaveName)))
+	b.WriteString(dimStyle.Render("Changes:"))
+	b.WriteString("\n")
 
 	// 显示 diff：从已有 profile 到当前 settings
 	if m.existingProfile != nil {
@@ -1142,8 +1181,8 @@ func (m Model) viewSaveOverwrite() string {
 		b.WriteString(boxStyle.Render(content))
 	}
 
-	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render("[y] overwrite  [n] save as new  [esc] cancel"))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("[y] overwrite  [n] new name  [esc] cancel"))
 
 	return b.String()
 }

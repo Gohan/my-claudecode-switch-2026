@@ -39,4 +39,20 @@ var (
 	messageStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F59E0B")).
 			Bold(true)
+
+	// Modal styles for popup overlay
+	modalBorderStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#7C3AED")).
+			Background(lipgloss.Color("#1E1E2E")).
+			Padding(1, 2).
+			Width(50)
+
+	modalTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#7C3AED")).
+			MarginBottom(1)
+
+	modalOverlayStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("#0F0F1A"))
 )
