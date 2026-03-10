@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"claude-switch/internal/repository"
-	"claude-switch/internal/runner"
 	"claude-switch/internal/service"
 	"claude-switch/internal/tui"
 )
@@ -68,6 +67,9 @@ func printHelp() {
 	home, _ := os.UserHomeDir()
 	profilesDir := filepath.Join(home, ".claude-switch", "profiles")
 
+	// 创建 runner 来获取 RunDir
+	runnerExec := service.NewProfileRunnerExec("claude")
+
 	fmt.Println("Claude Switch - Manage and switch between Claude Code profiles")
 	fmt.Println()
 	fmt.Println("Usage:")
@@ -82,5 +84,5 @@ func printHelp() {
 	fmt.Printf("  %s\n", profilesDir)
 	fmt.Println()
 	fmt.Println("Run directories are created in:")
-	fmt.Printf("  %s\n", runner.RunDir())
+	fmt.Printf("  %s\n", runnerExec.RunDir())
 }

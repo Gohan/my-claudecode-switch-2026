@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"os/exec"
 	"reflect"
 
 	"claude-switch/internal/domain"
@@ -129,11 +130,8 @@ type ProfileService interface {
 	Run(name string) error
 	LoadCurrent() (map[string]interface{}, error)
 	IsActive(p domain.Profile) bool
-}
-
-// ProfileRunner defines the interface for running a profile
-type ProfileRunner interface {
-	Run(p domain.Profile) error
+	PrepareAndBuild(name string, settings map[string]interface{}) (*exec.Cmd, error)
+	RunDir() string
 }
 
 // profileService implements ProfileService
@@ -287,4 +285,14 @@ func DefaultKimiProfile() map[string]interface{} {
 // DefaultAliProfile returns a profile template with Ali BaiLian configuration
 func DefaultAliProfile() map[string]interface{} {
 	return GetDefaultProfileSettings("ali")
+}
+
+// PrepareAndBuild prepares the run directory and builds the command
+func (s *profileService) PrepareAndBuild(name string, settings map[string]interface{}) (*exec.Cmd, error) {
+	return s.runner.PrepareAndBuild(name, settings)
+}
+
+// RunDir returns the run directory path
+func (s *profileService) RunDir() string {
+	return s.runner.RunDir()
 }

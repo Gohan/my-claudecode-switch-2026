@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -102,6 +103,15 @@ func (m *mockService) IsActive(p domain.Profile) bool {
 		return false
 	}
 	return false // simplified for testing
+}
+
+func (m *mockService) PrepareAndBuild(name string, settings map[string]interface{}) (*exec.Cmd, error) {
+	// Return nil command for testing - actual command execution not needed
+	return nil, nil
+}
+
+func (m *mockService) RunDir() string {
+	return "/fake/run/dir"
 }
 
 func TestModel_InitializesWithProfiles(t *testing.T) {

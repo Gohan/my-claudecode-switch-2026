@@ -165,53 +165,38 @@ func (r *ProfileRunnerExec) Run(p domain.Profile) error {
 
 ---
 
-## 架构重构未完成问题
+## 架构重构已完成 ✅
 
-### 1. 旧代码仍然存在且被使用 (Critical)
-**位置**: `internal/profile/profile.go`
+### 状态更新 (2026-03-11)
 
-**问题**: 已被 domain/repository/service 三层替代，但仍在 TUI 和 main.go 中使用：
-- `main.go` 导入 `internal/profile`
-- `internal/tui/model.go` 导入 `internal/profile`
+1. **internal/profile 目录已删除** - 旧代码已清理
+2. **TUI 已迁移到 service 层** - 通过 service 接口调用 runner
+3. **Runner 已统一** - TUI 通过 service.PrepareAndBuild() 获取命令
 
-这意味着架构重构**未完成**，新的 service/repository 层还未集成到 TUI。
+### 当前架构
 
----
+```
+main.go
+  └── service.ProfileService (interface)
+        ├── repository.ProfileRepository (interface)
+        │     └── ProfileRepositoryFS (impl)
+        └── ProfileRunner (interface)
+              └── ProfileRunnerExec (impl)
+```
 
-### 2. 代码重复 (Critical)
-**位置**: `internal/profile/profile.go` vs `internal/domain/profile.go`
-
-**问题**: 两个文件包含大量重复代码：
-
-| 重复类型 | 旧文件 | 新文件 |
-|---------|--------|--------|
-| Profile struct | profile.go:13 | domain/profile.go:11 |
-| DiffStatus/DiffEntry | profile.go:18-32 | domain/profile.go:21-37 |
-| invalidNameChars | profile.go:86 | domain/profile.go:40 |
-| Flatten | profile.go:117 | domain/profile.go:54 |
-| Diff | profile.go:136 | domain/profile.go:74 |
-| IsActive | profile.go:173 | domain/profile.go:112 |
-| MaskSensitive | profile.go:187 | domain/profile.go:127 |
-| GetSummary | profile.go:200 | domain/profile.go:141 |
-| GetModelMapping | profile.go:274 | domain/profile.go:154 |
-| Default*Profile | profile.go:213-271 | 无（仍在旧文件） |
-
-**建议**: 删除 `internal/profile/` 目录，TUI 迁移到新架构。
+TUI 不再直接依赖 `internal/runner`，而是通过 service 层的接口调用。
 
 ---
 
-### 3. 两套 Runner 实现 (Design Question)
-**位置**:
-- `internal/runner/runner.go` - 已有实现，TUI 正在使用
-- `internal/service/runner.go` - 新增的 service 层，未被使用
+## 历史问题（已解决）
 
-**问题**: 存在两个 runner 实现：
-- `internal/runner/runner.go` - 有 `Run()` 和 `BuildCommand()` 函数
-- `internal/service/runner.go` - 有 `ProfileRunnerExec` 和 `ProfileRunnerWithDir` 结构体
+### ~~旧代码仍然存在且被使用~~ ✅ 已解决
+- `internal/profile/` 目录已删除
+- TUI 已迁移使用 service 层
 
-TUI 当前使用 `internal/runner/runner.go`，service 层的 runner 是预留的但未集成。
-
-**待确认**: 是否需要统一或保留两个实现？
+### ~~两套 Runner 实现~~ ✅ 已解决
+- `internal/runner/runner.go` 保留作为独立包（MCP 功能可能需要）
+- TUI 通过 `service.ProfileRunner` 接口统一调用
 
 ---
 

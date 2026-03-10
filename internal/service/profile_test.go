@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,6 +75,14 @@ type memoryRunner struct {
 func (m *memoryRunner) Run(p domain.Profile) error {
 	m.runs = append(m.runs, p.Name)
 	return nil
+}
+
+func (m *memoryRunner) PrepareAndBuild(name string, settings map[string]interface{}) (*exec.Cmd, error) {
+	return nil, nil
+}
+
+func (m *memoryRunner) RunDir() string {
+	return "/fake/run/dir"
 }
 
 func TestProfileService_CreatesProfileWithValidData(t *testing.T) {
@@ -376,5 +385,5 @@ func TestNewProfileRunnerExec(t *testing.T) {
 func TestNewProfileRunnerWithDir(t *testing.T) {
 	runner := NewProfileRunnerWithDir("claude", "/tmp/config")
 	assert.NotNil(t, runner)
-	assert.NotNil(t, runner.BuildCommand())
+	assert.NotNil(t, runner.RunDir())
 }

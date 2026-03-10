@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"claude-switch/internal/domain"
-	"claude-switch/internal/runner"
 	"claude-switch/internal/service"
 )
 
@@ -653,8 +652,8 @@ func (m Model) updateConfirmRun(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		p := m.profiles[m.cursor]
 
-		// 准备运行目录
-		runDir, err := runner.PrepareRunDir(p.Name, p.Settings)
+		// 准备运行目录并构建命令
+		cmd, err := m.service.PrepareAndBuild(p.Name, p.Settings)
 		if err != nil {
 			m.message = fmt.Sprintf("Error preparing run dir: %v", err)
 			m.state = viewList
@@ -663,7 +662,6 @@ func (m Model) updateConfirmRun(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.state = viewList
 		// 使用 tea.ExecProcess 启动 claude，它会接管终端
-		cmd := runner.BuildCommand(runDir)
 		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 			if err != nil {
 				return err
@@ -1130,7 +1128,7 @@ func (m Model) viewConfirmRunModal() string {
 	var b strings.Builder
 
 	p := m.profiles[m.cursor]
-	runDir := runner.RunDir()
+	runDir := m.service.RunDir()
 	b.WriteString(modalTitleStyle.Render("Confirm Run Profile"))
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("Run claude with profile '%s'?\n", selectedStyle.Render(p.Name)))
