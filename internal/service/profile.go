@@ -114,8 +114,9 @@ func GetDefaultProfileSettings(configName string) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"model": "opus",
-		"env":   env,
+		"includeCoAuthoredBy": false,
+		"model":               "opus",
+		"env":                 env,
 	}
 }
 
