@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 
 	"claude-switch/internal/domain"
 )
@@ -70,16 +69,9 @@ func (r *profileRunnerBase) buildCommand(configDir string) *exec.Cmd {
 	fmt.Printf("[DEBUG] Using CLAUDE_CONFIG_DIR=%s\n", configDir)
 	env := append(os.Environ(), "CLAUDE_CONFIG_DIR="+configDir)
 
-	switch runtime.GOOS {
-	case "windows":
-		cmd := exec.Command(r.claudePath)
-		cmd.Env = env
-		return cmd
-	default:
-		cmd := exec.Command(r.claudePath)
-		cmd.Env = env
-		return cmd
-	}
+	cmd := exec.Command(r.claudePath)
+	cmd.Env = env
+	return cmd
 }
 
 // ProfileRunnerExec implements ProfileRunner using exec to run claude

@@ -20,7 +20,8 @@
       "mcp__web-search-prime__web_search_prime",
       "Bash(taskkill:*)",
       "Bash(bash:*)",
-      "mcp__web-reader__webReader"
+      "mcp__web-reader__webReader",
+      "Bash(git config:*)"
     ]
   }
 }

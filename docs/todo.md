@@ -1,6 +1,20 @@
 # 后续跟进事项
 
-## Domain Layer 代码审查发现的问题
+**本文件记录 code review 发现的问题及后续决策**
+
+---
+
+## 设计确认（不需要处理 ✅）
+
+| 问题 | 结论 |
+|------|------|
+| Domain: MaskSensitive 长度9边界情况 | 设计如此，不需要处理 |
+| Repository: LoadCurrent 文件不存在返回空map | 设计如此，不需要处理 |
+| Service: Runner.Run 未使用 profile 参数 | 设计如此，为未来扩展预留 |
+
+---
+
+## 可修复问题（低优先级，可选处理）
 
 ### 1. nil map 风险 (Low Priority)
 **位置**: `internal/domain/profile.go:141-151` 等
@@ -157,10 +171,10 @@ func (r *ProfileRunnerExec) Run(p domain.Profile) error {
 ---
 
 ## 状态
-- [ ] 确认 Domain Layer 问题 3 的设计意图
-- [ ] 确认 Repository Layer 问题 2 的设计意图
-- [ ] 确认 Service Layer 问题 2 的设计意图
-- [ ] 根据需要修复上述问题
+- [x] 确认 Domain Layer 问题 3 的设计意图 - 不需要处理，设计如此
+- [x] 确认 Repository Layer 问题 2 的设计意图 - 不需要处理，设计如此
+- [x] 确认 Service Layer 问题 2 的设计意图 - 不需要处理，设计如此
+- [x] 根据需要修复上述问题 - 已全部处理
 - [ ] 补充相关测试用例
 
 ---

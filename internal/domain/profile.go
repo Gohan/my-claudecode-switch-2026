@@ -42,10 +42,10 @@ var invalidNameChars = regexp.MustCompile(`[\\/:*?"<>|]`)
 // ValidateProfileName validates a profile name
 func ValidateProfileName(name string) error {
 	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("name cannot be empty")
+		return fmt.Errorf("%w: name cannot be empty", ErrInvalidName)
 	}
 	if match := invalidNameChars.FindString(name); match != "" {
-		return fmt.Errorf("invalid character: %s", match)
+		return fmt.Errorf("%w: invalid character: %s", ErrInvalidName, match)
 	}
 	return nil
 }
@@ -139,6 +139,9 @@ func MaskSensitive(key, value string) string {
 
 // GetSummary extracts model and baseURL from settings
 func GetSummary(settings map[string]interface{}) (model, baseURL string) {
+	if settings == nil {
+		return
+	}
 	if m, ok := settings["model"]; ok {
 		model = fmt.Sprintf("%v", m)
 	}
@@ -153,6 +156,9 @@ func GetSummary(settings map[string]interface{}) (model, baseURL string) {
 // GetModelMapping returns model mapping information from settings
 func GetModelMapping(settings map[string]interface{}) map[string]string {
 	mapping := make(map[string]string)
+	if settings == nil {
+		return mapping
+	}
 	if env, ok := settings["env"].(map[string]interface{}); ok {
 		if v, ok := env["ANTHROPIC_DEFAULT_HAIKU_MODEL"]; ok {
 			mapping["haiku"] = fmt.Sprintf("%v", v)

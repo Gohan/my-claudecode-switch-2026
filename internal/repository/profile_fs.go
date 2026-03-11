@@ -99,7 +99,7 @@ func (r *ProfileRepositoryFS) Delete(name string) error {
 		if os.IsNotExist(err) {
 			return domain.ErrProfileNotFound
 		}
-		return err
+		return fmt.Errorf("remove profile %s: %w", name, err)
 	}
 	return nil
 }
